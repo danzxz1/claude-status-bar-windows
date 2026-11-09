@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod i18n;
 mod installed;
 mod integration;
 mod model;
@@ -13,6 +14,13 @@ fn main() {
         Ok(c) => c,
         Err(_) => return,
     };
+    if !matches!(
+        args.get(1).map(String::as_str),
+        Some("--hook" | "--statusline")
+    ) {
+        let settings = model::Appearance::load(&context.root.join("appearance.json"));
+        i18n::init(&settings.language);
+    }
     match args.get(1).map(String::as_str) {
         Some("--install") => {
             if let Err(e) = context.install() {

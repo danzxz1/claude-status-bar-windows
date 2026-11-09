@@ -6,6 +6,16 @@ pub struct Notice {
     pub provider: String,
     pub title: String,
     pub text: String,
+    pub translate_text: bool,
+}
+impl Notice {
+    pub fn display_text(&self) -> String {
+        if self.translate_text {
+            crate::i18n::tr(&self.text)
+        } else {
+            self.text.clone()
+        }
+    }
 }
 #[derive(Default)]
 pub struct Notifications {
@@ -44,6 +54,7 @@ impl Notifications {
                         && settings.notify_done;
                     if permission || done {
                         notices.push(Notice {
+                            translate_text: false,
                             provider: provider.name.clone(),
                             title: format!(
                                 "{} · {}",
@@ -101,7 +112,7 @@ impl Notifications {
                         }
                         if settings.notify_limits && window.resets_at > now {
                             if let Some(threshold) = threshold_notice {
-                                notices.push(Notice{provider:provider.name.clone(),title:format!("{} · Лимит {}",provider.name,name),text:format!("Использовано {threshold}% лимита. Текущее значение: {:.0}%.",window.used)});
+                                notices.push(Notice{translate_text:true,provider:provider.name.clone(),title:format!("{} · Лимит {}",provider.name,name),text:format!("Использовано {threshold}% лимита. Текущее значение: {:.0}%.",window.used)});
                             }
                         }
                         if settings.notify_reset
@@ -110,7 +121,7 @@ impl Notifications {
                                 .resets
                                 .insert((key.0.clone(), key.1.clone(), old_reset))
                         {
-                            notices.push(Notice { provider: provider.name.clone(), title: format!("{} · Сброс лимита", provider.name),
+                            notices.push(Notice { translate_text:true, provider: provider.name.clone(), title: format!("{} · Сброс лимита", provider.name),
                                 text: format!("Окно «{name}» завершилось. Актуальные проценты появятся после обновления данных."), });
                         }
                     }
@@ -124,6 +135,7 @@ impl Notifications {
                 && settings.notify_reset
             {
                 notices.push(Notice {
+                    translate_text: true,
                     provider: provider.clone(),
                     title: format!("{provider} · Сброс лимита"),
                     text: format!("Окно «{name}» завершилось. Ожидаем актуальные проценты."),
@@ -175,6 +187,16 @@ mod tests {
             }),
             notice: None,
         }
+    }
+    #[test]
+    fn user_task_names_are_never_translated() {
+        let notice = Notice {
+            provider: "Codex".into(),
+            title: "Работа завершена".into(),
+            text: "Выход".into(),
+            translate_text: false,
+        };
+        assert_eq!(notice.display_text(), "Выход");
     }
     #[test]
     fn no_old_notifications_and_state_transitions() {

@@ -1,4 +1,5 @@
 use crate::{
+    i18n,
     installed::{self, InstalledAgents},
     integration,
     model::*,
@@ -45,6 +46,9 @@ fn copy_wide<const N: usize>(target: &mut [u16; N], text: &str) {
         offset += units.len();
     }
 }
+fn copy_wide_ui<const N: usize>(target: &mut [u16; N], text: &str) {
+    copy_wide(target, &i18n::tr(text));
+}
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -63,7 +67,7 @@ pub fn error(message: &str) {
     unsafe {
         MessageBoxW(
             null_mut(),
-            wide(message).as_ptr(),
+            wide(&i18n::tr(message)).as_ptr(),
             wide("Claude + Codex").as_ptr(),
             MB_OK | MB_ICONERROR,
         );
@@ -149,9 +153,34 @@ impl Canvas {
             DeleteObject(brush);
         }
     }
-    // Явные координаты и стиль соответствуют примитиву GDI.
     #[allow(clippy::too_many_arguments)]
     fn text(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        size: i32,
+        color: u32,
+        bold: bool,
+        flags: u32,
+    ) {
+        self.text_raw(
+            &i18n::tr(text),
+            x,
+            y,
+            width,
+            height,
+            size,
+            color,
+            bold,
+            flags,
+        );
+    }
+    // Явные координаты и стиль соответствуют примитиву GDI.
+    #[allow(clippy::too_many_arguments)]
+    fn text_raw(
         &self,
         text: &str,
         x: i32,
@@ -346,20 +375,13 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
             true,
             single,
         );
-        canvas.text(
-            selected.map(|s| s.task()).unwrap_or("Нет недавних сессий"),
-            18,
-            44,
-            334,
-            24,
-            13,
-            white,
-            false,
-            single,
-        );
+        let task = selected
+            .map(|s| s.task().to_owned())
+            .unwrap_or_else(|| i18n::tr("Нет недавних сессий"));
+        canvas.text_raw(&task, 18, 44, 334, 24, 13, white, false, single);
         let mut status = if settings.show_text {
             selected
-                .map(|s| s.label.clone())
+                .map(|s| i18n::tr(&s.label))
                 .unwrap_or("Ожидает сессию".into())
         } else {
             String::new()
@@ -370,7 +392,7 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
                     if !status.is_empty() {
                         status.push_str(" · ");
                     }
-                    status.push_str(&duration(now() - s.started_at));
+                    status.push_str(&i18n::duration(now() - s.started_at));
                 }
             }
         }
@@ -432,11 +454,11 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
             );
             for (i, s) in p.sessions.iter().take(3).enumerate() {
                 let row = if settings.show_text {
-                    format!("{} · {}", s.task(), s.label)
+                    format!("{} · {}", s.task(), i18n::tr(&s.label))
                 } else {
                     s.task().into()
                 };
-                canvas.text(
+                canvas.text_raw(
                     &row,
                     18,
                     313 + i as i32 * 24,
@@ -525,7 +547,7 @@ fn draw_limit(c: &Canvas, label: &str, limit: Option<&Limit>, x: i32, y: i32) {
         );
     }
     let reset = if let Some(l) = valid {
-        format!("Сброс через {}", duration(l.resets_at - now()))
+        format!("Сброс через {}", i18n::duration(l.resets_at - now()))
     } else if limit.is_some() {
         "Окно истекло · ожидаем обновления".into()
     } else {
@@ -717,7 +739,7 @@ impl App {
             data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
             data.uCallbackMessage = CALLBACK;
             data.hIcon = icon;
-            copy_wide(
+            copy_wide_ui(
                 &mut data.szTip,
                 if self.settings.tracking_bits() == 0 {
                     "Отслеживание выключено"
@@ -859,8 +881,8 @@ impl App {
             };
             data.uFlags = NIF_INFO;
             data.dwInfoFlags = NIIF_INFO | if self.settings.sound { 0 } else { NIIF_NOSOUND };
-            copy_wide(&mut data.szInfoTitle, &notice.title);
-            copy_wide(&mut data.szInfo, &notice.text);
+            copy_wide_ui(&mut data.szInfoTitle, &notice.title);
+            copy_wide(&mut data.szInfo, &notice.display_text());
             Shell_NotifyIconW(NIM_MODIFY, &data);
             self.last_notice_at = Instant::now();
         }
@@ -877,7 +899,7 @@ impl App {
                     draw_panel(&canvas, &self.providers, &self.settings);
                 } else {
                     canvas.fill(0, 0, 800, 400, rgb(48, 48, 54));
-                    canvas.text(
+                    canvas.text_raw(
                         &self.tip_text,
                         10,
                         7,
@@ -1158,6 +1180,8 @@ impl App {
     }
     unsafe fn menu(&mut self) {
         unsafe {
+            i18n::init(&self.settings.language);
+            let language_items = i18n::languages();
             self.menu_active = true;
             self.pinned = false;
             self.hide();
@@ -1179,7 +1203,29 @@ impl App {
                 menu,
                 MF_POPUP,
                 tracking_menu as usize,
-                wide("Отслеживание").as_ptr(),
+                wide(&i18n::tr("Отслеживание")).as_ptr(),
+            );
+            let language_menu = CreatePopupMenu();
+            add(
+                language_menu,
+                90,
+                "Системный (автоматически)",
+                self.settings.language == "auto",
+            );
+            AppendMenuW(language_menu, MF_SEPARATOR, 0, null());
+            for (index, (code, name)) in language_items.iter().enumerate() {
+                add(
+                    language_menu,
+                    200 + index,
+                    name,
+                    self.settings.language != "auto" && *code == i18n::current(),
+                );
+            }
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                language_menu as usize,
+                wide(&i18n::tr("Язык")).as_ptr(),
             );
             let appearance = CreatePopupMenu();
             let animation = CreatePopupMenu();
@@ -1204,7 +1250,7 @@ impl App {
                 appearance,
                 MF_POPUP,
                 animation as usize,
-                wide("Анимация").as_ptr(),
+                wide(&i18n::tr("Анимация")).as_ptr(),
             );
             add(
                 color,
@@ -1222,7 +1268,7 @@ impl App {
                 appearance,
                 MF_POPUP,
                 color as usize,
-                wide("Цвет значка").as_ptr(),
+                wide(&i18n::tr("Цвет значка")).as_ptr(),
             );
             AppendMenuW(appearance, MF_SEPARATOR, 0, null());
             add(
@@ -1247,7 +1293,7 @@ impl App {
                 menu,
                 MF_POPUP,
                 appearance as usize,
-                wide("Внешний вид").as_ptr(),
+                wide(&i18n::tr("Внешний вид")).as_ptr(),
             );
             add(
                 panel,
@@ -1270,7 +1316,12 @@ impl App {
                     self.settings.panel_scale == *value,
                 );
             }
-            AppendMenuW(panel, MF_POPUP, scale as usize, wide("Масштаб").as_ptr());
+            AppendMenuW(
+                panel,
+                MF_POPUP,
+                scale as usize,
+                wide(&i18n::tr("Масштаб")).as_ptr(),
+            );
             AppendMenuW(panel, MF_SEPARATOR, 0, null());
             add(panel, 43, "Показывать Claude", self.settings.show_claude);
             add(panel, 44, "Показывать Codex", self.settings.show_codex);
@@ -1280,7 +1331,12 @@ impl App {
             if !self.settings.show_claude {
                 EnableMenuItem(panel, 44, MF_BYCOMMAND | MF_GRAYED);
             }
-            AppendMenuW(menu, MF_POPUP, panel as usize, wide("Панель").as_ptr());
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                panel as usize,
+                wide(&i18n::tr("Панель")).as_ptr(),
+            );
             add(
                 notifications,
                 60,
@@ -1319,7 +1375,7 @@ impl App {
                 menu,
                 MF_POPUP,
                 notifications as usize,
-                wide("Уведомления").as_ptr(),
+                wide(&i18n::tr("Уведомления")).as_ptr(),
             );
             add(menu, 70, "Автозапуск Windows", system::autostart_enabled());
             AppendMenuW(menu, MF_SEPARATOR, 0, null());
@@ -1403,10 +1459,25 @@ impl App {
                     }
                     Err(e) => error(&e.to_string()),
                 },
+                90 => self.settings.language = "auto".into(),
+                200..=299 => {
+                    if let Some((code, _)) = language_items.get((command - 200) as usize) {
+                        self.settings.language = code.clone();
+                    }
+                }
                 99 => PostQuitMessage(0),
                 _ => {}
             }
-            if matches!(command,10..=13|20|21|30..=32|40..=44|50..=53|60..=66|80|81) {
+            if matches!(command,10..=13|20|21|30..=32|40..=44|50..=53|60..=66|80|81|90|200..=299) {
+                if command == 90 || (200..=299).contains(&command) {
+                    i18n::init(&self.settings.language);
+                    SetWindowTextW(
+                        self.panel,
+                        wide(&i18n::tr("Claude + Codex — состояние и лимиты")).as_ptr(),
+                    );
+                    SetWindowTextW(self.tip, wide(&i18n::tr("Название задачи")).as_ptr());
+                    self.notify(NIM_MODIFY);
+                }
                 if let Err(e) = self.settings.save(&data_dir().join("appearance.json")) {
                     error(&format!("Не удалось сохранить настройки: {e}"));
                 }
@@ -1443,7 +1514,7 @@ unsafe fn add(menu: HMENU, id: usize, label: &str, checked: bool) {
             menu,
             MF_STRING | if checked { MF_CHECKED } else { 0 },
             id,
-            wide(label).as_ptr(),
+            wide(&i18n::tr(label)).as_ptr(),
         );
     }
 }
@@ -1526,7 +1597,7 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
         let panel = CreateWindowExW(
             WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             class.as_ptr(),
-            wide("Claude + Codex — состояние и лимиты").as_ptr(),
+            wide(&i18n::tr("Claude + Codex — состояние и лимиты")).as_ptr(),
             WS_POPUP,
             0,
             0,
@@ -1540,7 +1611,7 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
         let tip = CreateWindowExW(
             WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             class.as_ptr(),
-            wide("Название задачи").as_ptr(),
+            wide(&i18n::tr("Название задачи")).as_ptr(),
             WS_POPUP,
             0,
             0,

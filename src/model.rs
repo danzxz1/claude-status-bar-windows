@@ -57,6 +57,7 @@ pub struct Provider {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct Appearance {
+    pub language: String,
     pub animation: String,
     pub color_mode: String,
     pub show_timer: bool,
@@ -81,6 +82,7 @@ pub struct Appearance {
 impl Default for Appearance {
     fn default() -> Self {
         Self {
+            language: "auto".into(),
             animation: "Spark".into(),
             color_mode: "Orange".into(),
             show_timer: true,
@@ -237,8 +239,9 @@ pub fn demo() -> Vec<Provider> {
             label: label.into(),
             started_at: n - 135,
             updated_at: n,
-            title: (name == "Codex")
-                .then(|| "Добавить настройки внешнего вида и название задачи Codex".into()),
+            title: (name == "Codex").then(|| {
+                crate::i18n::tr("Добавить настройки внешнего вида и название задачи Codex")
+            }),
             ..Default::default()
         }],
         usage: Some(Usage {

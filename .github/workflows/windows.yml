@@ -33,9 +33,10 @@ jobs:
         run: |
           New-Item -ItemType Directory dist -Force | Out-Null
           Copy-Item target/release/ClaudeWindowsStatusBar.exe dist/
+          Copy-Item locales dist/ -Recurse
           $hash = (Get-FileHash dist/ClaudeWindowsStatusBar.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  ClaudeWindowsStatusBar.exe" | Set-Content dist/SHA256SUMS.txt -Encoding utf8
-          Compress-Archive -Path dist/ClaudeWindowsStatusBar.exe,LICENSE,README.md -DestinationPath dist/ClaudeWindowsStatusBar-windows-x64.zip
+          Compress-Archive -Path dist/ClaudeWindowsStatusBar.exe,dist/locales,LICENSE,README.md,README.ru.md,assets -DestinationPath dist/ClaudeWindowsStatusBar-windows-x64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeWindowsStatusBar-windows-x64

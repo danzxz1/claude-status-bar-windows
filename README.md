@@ -21,7 +21,7 @@ A small native **Rust** app that monitors **Claude Code and Codex** from the Win
 
 ![Claude and Codex panel with demo data](assets/preview.png)
 
-> Screenshots use demo data. Percentages show quota **used**, not quota remaining. The app currently uses Russian UI labels; instructions below include the actual menu names.
+> Screenshots use demo data. Percentages show quota **used**, not quota remaining. The interface follows the Windows UI language (English/Russian) or your manual language choice.
 
 ## Features
 
@@ -33,6 +33,7 @@ A small native **Rust** app that monitors **Claude Code and Codex** from the Win
 | **Multiple sessions** | Permission requests take priority over working sessions; up to three rows and a count of the rest |
 | **Long titles** | Hover over a task title to read the full displayed title |
 | **Appearance** | Spark, Unicode spinner, Clawd crab, and Orbit animations; agent colors or a system-aware monochrome icon |
+| **Languages** | Automatic Windows UI language, manual selection, and separate JSON translation files |
 | **Tracking controls** | Independently enable or disable Claude and Codex; preferences persist across restarts |
 | **Notifications** | Completion, permission requests, 80/90/100% thresholds, and resets; optional sound and quiet mode |
 | **Panel layout** | Horizontal or vertical, compact mode, 75–150% scale, and individual agent blocks |
@@ -72,6 +73,7 @@ No additional setup is needed. While Codex tracking is enabled, the running app 
 | Left-click the tray icon | Pin or hide the panel |
 | Click outside a pinned panel | Unpin it |
 | Hover over a task title | Read the full displayed title |
+| Right-click → **Language** (`Язык`) | System language, English, Russian, or an added translation |
 | Right-click → **Appearance** (`Внешний вид`) | Animation, color, timer, text, and separate icons |
 | Right-click → **Tracking** (`Отслеживание`) | Enable or disable Claude/Codex data collection |
 | Right-click → **Panel** (`Панель`) | Layout, compact mode, scale, and visible agent blocks |
@@ -82,6 +84,30 @@ No additional setup is needed. While Codex tracking is enabled, the running app 
 The hover panel is suppressed while the context menu is open. A yellow permission indicator remains available with every animation and color mode.
 
 Windows does not provide a standard way to place arbitrary text next to a tray icon as macOS does in its menu bar. Text and timer switches therefore control the panel's activity line; task titles and usage bars remain visible.
+
+## Languages
+
+The default setting is **System (automatic)**. An English Windows UI selects English; a Russian Windows UI selects Russian. Other system languages use English unless a matching translation has been added. Choose a language manually from **Language** (`Язык`) in the tray menu. It applies immediately and is remembered after restart.
+
+English and Russian are embedded in the executable, so the standalone `.exe` still works without extra files. The ZIP also includes editable [`locales/en.json`](locales/en.json) and [`locales/ru.json`](locales/ru.json).
+
+### Add another language
+
+1. Copy `locales/en.json` to `locales/de.json`, for example.
+2. Change `_meta.code` to `de` and `_meta.name` to `Deutsch`.
+3. Translate the **values** in `strings`; keep the keys and placeholders such as `{duration}` unchanged.
+4. Put the file in the `locales` folder **next to the executable**. Reopen the tray menu and select the new language.
+
+A minimal example:
+
+```json
+{
+  "_meta": { "code": "de", "name": "Deutsch" },
+  "strings": { "menu.exit": "Beenden" }
+}
+```
+
+Missing keys fall back to English. An external file can also override an embedded language. No recompilation is needed. Task names, file paths, and other user data are preserved in their original language.
 
 ## Agent tracking
 
@@ -202,6 +228,8 @@ Additional commands:
 # Interactive menu checks; quit the regular app first
 .\scripts\smoke-ui.ps1
 .\scripts\smoke-ui.ps1 -SeparateIcons -Vertical
+.\scripts\smoke-ui.ps1 -Language en
+.\scripts\smoke-ui.ps1 -SwitchLanguage
 .\scripts\smoke-ui.ps1 -ToggleTracking
 .\scripts\smoke-ui.ps1 -SeparateIcons -DisabledTracking
 ```

@@ -1,4 +1,4 @@
-﻿param([string]$Exe = (Join-Path $PSScriptRoot '..\target\release\ClaudeWindowsStatusBar.exe'), [switch]$SeparateIcons, [switch]$Vertical, [switch]$DisabledTracking, [switch]$ToggleTracking)
+﻿param([string]$Exe = (Join-Path $PSScriptRoot '..\target\release\ClaudeWindowsStatusBar.exe'), [switch]$SeparateIcons, [switch]$Vertical, [switch]$DisabledTracking, [switch]$ToggleTracking, [ValidateSet('ru','en')][string]$Language='ru', [switch]$SwitchLanguage)
 $ErrorActionPreference = 'Stop'
 Add-Type @"
 using System;
@@ -19,17 +19,19 @@ public static class NativeTrayTest {
     [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
     [DllImport("user32.dll")] public static extern bool GetMenuItemRect(IntPtr w,IntPtr menu,uint item,out RECT rect);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu,uint item,StringBuilder text,int cap,uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr value);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extra);
 }
 "@
+$previousDpiContext=[NativeTrayTest]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $originalPoint = New-Object NativeTrayTest+POINT
 [NativeTrayTest]::GetCursorPos([ref]$originalPoint) | Out-Null
 $previousData=$env:CWSB_DATA_DIR
 $temporaryData=Join-Path ([IO.Path]::GetTempPath()) ('cwsb-ui-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporaryData -Force | Out-Null
-$settings=@{SeparateIcons=[bool]$SeparateIcons;PanelLayout=$(if($Vertical){'Vertical'}else{'Horizontal'});PanelScale=100;TrackClaude=(!$DisabledTracking);TrackCodex=(!$DisabledTracking)}
+$settings=@{Language=$Language;SeparateIcons=[bool]$SeparateIcons;PanelLayout=$(if($Vertical){'Vertical'}else{'Horizontal'});PanelScale=100;TrackClaude=(!$DisabledTracking);TrackCodex=(!$DisabledTracking)}
 $settings|ConvertTo-Json|Set-Content (Join-Path $temporaryData 'appearance.json') -Encoding UTF8
 $env:CWSB_DATA_DIR=$temporaryData
 $testProcess = Start-Process -FilePath $Exe -ArgumentList '--demo' -WindowStyle Hidden -PassThru
@@ -37,7 +39,7 @@ try {
     $window=[IntPtr]::Zero
     for($i=0;$i -lt 30;$i++) { Start-Sleep -Milliseconds 100; $window=[NativeTrayTest]::FindWindow('ClaudeWindowsStatusBarRust','Claude + Codex — Rust'); if($window -ne [IntPtr]::Zero){break} }
     if($window -eq [IntPtr]::Zero){throw 'Не найдено тестовое окно. Закройте другие экземпляры приложения.'}
-    $panel=[NativeTrayTest]::FindWindow('ClaudeWindowsStatusBarRust','Claude + Codex — состояние и лимиты')
+    $panel=[NativeTrayTest]::FindWindow('ClaudeWindowsStatusBarRust',$(if($Language -eq 'en'){'Claude + Codex — status and limits'}else{'Claude + Codex — состояние и лимиты'}))
     if($SeparateIcons -and !$DisabledTracking){foreach($iconIndex in @(1,2)){$iconId=New-Object NativeTrayTest+ICONID;$iconId.Size=[Runtime.InteropServices.Marshal]::SizeOf($iconId);$iconId.Window=$window;$iconId.Id=$iconIndex;$iconRect=New-Object NativeTrayTest+RECT;if([NativeTrayTest]::Shell_NotifyIconGetRect([ref]$iconId,[ref]$iconRect) -lt 0){throw ('Не найден отдельный значок '+$iconIndex)}}}
     $layoutBounds=New-Object NativeTrayTest+RECT
     [NativeTrayTest]::GetWindowRect($panel,[ref]$layoutBounds) | Out-Null
@@ -95,9 +97,38 @@ try {
     Start-Sleep -Milliseconds 100
         }
     }
+    if($SwitchLanguage){
+        $languageMenu=[NativeTrayTest]::GetSubMenu($menu,1)
+        $englishPosition=-1
+        for($position=0;$position -lt [NativeTrayTest]::GetMenuItemCount($languageMenu);$position++){$itemText=New-Object Text.StringBuilder 128;[NativeTrayTest]::GetMenuString($languageMenu,$position,$itemText,128,0x0400)|Out-Null;if($itemText.ToString() -eq 'English'){$englishPosition=$position;break}}
+        if($englishPosition -lt 0){throw 'English отсутствует в меню языка'}
+        $languageParent=New-Object NativeTrayTest+RECT
+        [NativeTrayTest]::GetMenuItemRect($window,$menu,1,[ref]$languageParent)|Out-Null
+        [NativeTrayTest]::SetCursorPos(($languageParent.Left+30),(($languageParent.Top+$languageParent.Bottom)/2))|Out-Null
+        Start-Sleep -Milliseconds 900
+        $languageBounds=New-Object NativeTrayTest+RECT
+        [NativeTrayTest]::GetMenuItemRect($window,$languageMenu,$englishPosition,[ref]$languageBounds)|Out-Null
+        if($languageBounds.Right -le $languageBounds.Left){$cursorDebug=New-Object NativeTrayTest+POINT;[NativeTrayTest]::GetCursorPos([ref]$cursorDebug)|Out-Null;$popupDebug=New-Object NativeTrayTest+RECT;[NativeTrayTest]::GetWindowRect($popup,[ref]$popupDebug)|Out-Null;throw ("Подменю языка: parent={0},{1},{2},{3}; cursor={4},{5}; popup={6},{7},{8},{9}; dpi={10}" -f $languageParent.Left,$languageParent.Top,$languageParent.Right,$languageParent.Bottom,$cursorDebug.X,$cursorDebug.Y,$popupDebug.Left,$popupDebug.Top,$popupDebug.Right,$popupDebug.Bottom,$previousDpiContext)}
+        [NativeTrayTest]::SetCursorPos(($languageBounds.Left+30),(($languageBounds.Top+$languageBounds.Bottom)/2))|Out-Null
+        Start-Sleep -Milliseconds 250
+        [NativeTrayTest]::mouse_event(2,0,0,0,[UIntPtr]::Zero);[NativeTrayTest]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 250
+        $saved=Get-Content (Join-Path $temporaryData 'appearance.json') -Raw -Encoding UTF8|ConvertFrom-Json
+        if($saved.Language -ne 'en'){throw 'Выбор английского языка не сохранился'}
+        $Language='en'
+        [NativeTrayTest]::SendMessage($window,0x8001,[IntPtr]::Zero,[IntPtr]0x007B)|Out-Null
+        Start-Sleep -Milliseconds 300
+        $popup=[NativeTrayTest]::FindWindow('#32768',$null);$menu=[NativeTrayTest]::SendMessage($popup,0x01E1,[IntPtr]::Zero,[IntPtr]::Zero);$count=[NativeTrayTest]::GetMenuItemCount($menu)
+        $languageParent=New-Object NativeTrayTest+RECT
+        [NativeTrayTest]::GetMenuItemRect($window,$menu,1,[ref]$languageParent)|Out-Null
+        [NativeTrayTest]::SetCursorPos(($languageParent.Left+30),(($languageParent.Top+$languageParent.Bottom)/2))|Out-Null
+        Start-Sleep -Milliseconds 100
+        [NativeTrayTest]::PostMessage($popup,0x0100,[IntPtr]0x24,[IntPtr]::Zero)|Out-Null
+        Start-Sleep -Milliseconds 50;Start-Sleep -Milliseconds 100
+    }
     $label=New-Object Text.StringBuilder 128
     [NativeTrayTest]::GetMenuString($menu,($count-1),$label,128,0x0400) | Out-Null
-    if($label.ToString() -ne 'Выход'){throw ('Последний пункт: '+$label.ToString())}
+    if($label.ToString() -ne $(if($Language -eq 'en'){'Exit'}else{'Выход'})){throw ('Последний пункт: '+$label.ToString())}
     $bounds=New-Object NativeTrayTest+RECT
     [NativeTrayTest]::GetMenuItemRect($window,$menu,($count-1),[ref]$bounds) | Out-Null
     if($bounds.Right -le $bounds.Left){throw "Меню Выход не получило видимые размеры"}
@@ -112,6 +143,7 @@ try {
 } finally {
     if(!$testProcess.HasExited){$testProcess.Kill();$testProcess.WaitForExit()}
     [NativeTrayTest]::SetCursorPos($originalPoint.X,$originalPoint.Y) | Out-Null
+    [NativeTrayTest]::SetThreadDpiAwarenessContext($previousDpiContext)|Out-Null
     if($null -eq $previousData){Remove-Item Env:\CWSB_DATA_DIR -ErrorAction SilentlyContinue}else{$env:CWSB_DATA_DIR=$previousData}
     $resolved=[IO.Path]::GetFullPath($temporaryData)
     $base=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
