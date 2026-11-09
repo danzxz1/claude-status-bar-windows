@@ -59,6 +59,7 @@ try {
     if($popup -eq [IntPtr]::Zero){throw 'Меню не открылось'}
     $menu=[NativeTrayTest]::SendMessage($popup,0x01E1,[IntPtr]::Zero,[IntPtr]::Zero)
     $count=[NativeTrayTest]::GetMenuItemCount($menu)
+    for($item=0;$item -lt $count;$item++){$entry=New-Object Text.StringBuilder 128;[NativeTrayTest]::GetMenuString($menu,$item,$entry,128,0x0400)|Out-Null;if($entry.ToString() -eq 'Перейти к задаче'){throw 'Удалённый механизм остался в меню'}}
     $label=New-Object Text.StringBuilder 128
     [NativeTrayTest]::GetMenuString($menu,($count-1),$label,128,0x0400) | Out-Null
     if($label.ToString() -ne 'Выход'){throw ('Последний пункт: '+$label.ToString())}

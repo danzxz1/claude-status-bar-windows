@@ -1,4 +1,4 @@
-use crate::model::{Appearance, Provider, Session};
+use crate::model::{Appearance, Provider};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
@@ -6,7 +6,6 @@ pub struct Notice {
     pub provider: String,
     pub title: String,
     pub text: String,
-    pub session: Option<Session>,
 }
 #[derive(Default)]
 pub struct Notifications {
@@ -47,7 +46,6 @@ impl Notifications {
                                 }
                             ),
                             text: session.task().into(),
-                            session: Some(session.clone()),
                         });
                     }
                 }
@@ -94,7 +92,7 @@ impl Notifications {
                         }
                         if settings.notify_limits && window.resets_at > now {
                             if let Some(threshold) = threshold_notice {
-                                notices.push(Notice{provider:provider.name.clone(),title:format!("{} · Лимит {}",provider.name,name),text:format!("Использовано {threshold}% лимита. Текущее значение: {:.0}%.",window.used),session:None});
+                                notices.push(Notice{provider:provider.name.clone(),title:format!("{} · Лимит {}",provider.name,name),text:format!("Использовано {threshold}% лимита. Текущее значение: {:.0}%.",window.used)});
                             }
                         }
                         if settings.notify_reset
@@ -104,7 +102,7 @@ impl Notifications {
                                 .insert((key.0.clone(), key.1.clone(), old_reset))
                         {
                             notices.push(Notice { provider: provider.name.clone(), title: format!("{} · Сброс лимита", provider.name),
-                                text: format!("Окно «{name}» завершилось. Актуальные проценты появятся после обновления данных."), session: None });
+                                text: format!("Окно «{name}» завершилось. Актуальные проценты появятся после обновления данных."), });
                         }
                     }
                 }
@@ -120,7 +118,6 @@ impl Notifications {
                     provider: provider.clone(),
                     title: format!("{provider} · Сброс лимита"),
                     text: format!("Окно «{name}» завершилось. Ожидаем актуальные проценты."),
-                    session: None,
                 });
             }
         }

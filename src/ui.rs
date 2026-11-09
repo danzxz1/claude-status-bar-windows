@@ -1,4 +1,5 @@
 use crate::{
+    installed::{self, InstalledAgents},
     integration,
     model::*,
     monitor::Monitor,
@@ -315,7 +316,7 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
             334,
             24,
             13,
-            rgb(175, 210, 242),
+            white,
             false,
             single,
         );
@@ -405,7 +406,7 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
                     334,
                     24,
                     12,
-                    rgb(175, 210, 242),
+                    muted,
                     false,
                     single,
                 );
@@ -594,7 +595,13 @@ fn icon_pixels(settings: &Appearance, state: &str, frame: u32) -> Vec<u8> {
                     let dot =
                         state == "permission" && (px - 26.).powi(2) + (py - 26.).powi(2) < 22.;
                     if on || dot {
-                        let c = if dot { [255, 197, 69] } else { color };
+                        let c = if dot {
+                            [255, 197, 69]
+                        } else if settings.color_mode == "Split" && px >= 16. {
+                            [130, 188, 242]
+                        } else {
+                            color
+                        };
                         red += c[0] as u32;
                         green += c[1] as u32;
                         blue += c[2] as u32;
@@ -638,10 +645,10 @@ struct App {
     active_tray: u32,
     notifications: Notifications,
     pending_notices: VecDeque<Notice>,
-    last_notice: Option<Notice>,
     last_notice_at: Instant,
-    bindings: HashMap<String, usize>,
     settings: Appearance,
+    installed: InstalledAgents,
+    last_install_probe: Instant,
     providers: Vec<Provider>,
     shared: Arc<Mutex<Vec<Provider>>>,
     stop: Arc<AtomicBool>,
@@ -692,6 +699,18 @@ impl App {
             }
         }
     }
+    fn icon_settings(&self, id: u32) -> Appearance {
+        let mut settings = self.settings.clone();
+        if settings.color_mode == "Orange" {
+            settings.color_mode = if self.settings.separate_icons {
+                if id == 2 { "Codex" } else { "Orange" }
+            } else {
+                self.installed.brand_mode()
+            }
+            .into();
+        }
+        settings
+    }
     unsafe fn rebuild_icons(&mut self) {
         unsafe {
             self.icon_signatures.clear();
@@ -713,7 +732,7 @@ impl App {
                 vec![1]
             };
             for id in ids {
-                let icon = make_icon(&self.settings, "idle", 0);
+                let icon = make_icon(&self.icon_settings(id), "idle", 0);
                 self.icons.push((id, icon));
                 self.notify_one(NIM_ADD, id, icon);
             }
@@ -746,10 +765,7 @@ impl App {
                 } else {
                     0
                 };
-                let mut settings = self.settings.clone();
-                if self.settings.separate_icons && id == 2 && settings.color_mode == "Orange" {
-                    settings.color_mode = "Codex".into();
-                }
+                let settings = self.icon_settings(id);
                 let signature = format!(
                     "{}:{}:{}:{}:{:?}",
                     settings.animation,
@@ -792,69 +808,7 @@ impl App {
             copy_wide(&mut data.szInfoTitle, &notice.title);
             copy_wide(&mut data.szInfo, &notice.text);
             Shell_NotifyIconW(NIM_MODIFY, &data);
-            self.last_notice = Some(notice);
             self.last_notice_at = Instant::now();
-        }
-    }
-    unsafe fn open_task(&mut self, provider: &str, session: &Session) {
-        unsafe {
-            self.hide();
-            let key = format!("{provider}:{}", session.session_id);
-            if let Some(hwnd) = self.bindings.get(&key) {
-                if system::activate(*hwnd) {
-                    return;
-                }
-                self.bindings.remove(&key);
-            }
-            let candidates = system::candidates(provider, session);
-            if let Some(first) = candidates.first() {
-                if first.score >= 80
-                    && candidates
-                        .get(1)
-                        .is_none_or(|next| first.score > next.score)
-                    && system::activate(first.hwnd)
-                {
-                    self.bindings.insert(key, first.hwnd);
-                    return;
-                }
-            }
-            if candidates.is_empty() {
-                error(
-                    "Не найдено доступное окно. Откройте окно агента или терминала и повторите щелчок.",
-                );
-                return;
-            }
-            let menu = CreatePopupMenu();
-            add(menu, 0, "Выберите окно задачи", false);
-            EnableMenuItem(menu, 0, MF_BYPOSITION | MF_GRAYED);
-            AppendMenuW(menu, MF_SEPARATOR, 0, null());
-            for (index, target) in candidates.iter().take(30).enumerate() {
-                add(menu, 1000 + index, &target.title, false);
-            }
-            let mut point: POINT = zeroed();
-            GetCursorPos(&mut point);
-            self.menu_active = true;
-            SetForegroundWindow(self.owner);
-            let command = TrackPopupMenu(
-                menu,
-                TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                point.x,
-                point.y,
-                0,
-                self.owner,
-                null(),
-            );
-            DestroyMenu(menu);
-            self.menu_active = false;
-            self.last_hover = Instant::now();
-            PostMessageW(self.owner, WM_NULL, 0, 0);
-            if command >= 1000 {
-                if let Some(target) = candidates.get((command - 1000) as usize) {
-                    if system::activate(target.hwnd) {
-                        self.bindings.insert(key, target.hwnd);
-                    }
-                }
-            }
         }
     }
     unsafe fn paint(&self, hwnd: HWND) {
@@ -961,6 +915,10 @@ impl App {
     }
     unsafe fn tick(&mut self) {
         unsafe {
+            if self.last_install_probe.elapsed() >= Duration::from_secs(30) {
+                self.installed = installed::detect();
+                self.last_install_probe = Instant::now();
+            }
             if self.last_update.elapsed() >= Duration::from_secs(1) {
                 self.providers = if self.demo {
                     demo()
@@ -1087,20 +1045,8 @@ impl App {
     }
     fn title_at(&self, x: i32, y: i32) -> String {
         self.session_at(x, y)
-            .map(|(_, s)| format!("{}\nНажмите, чтобы перейти к окну задачи", s.task()))
+            .map(|(_, s)| s.task().to_owned())
             .unwrap_or_default()
-    }
-    unsafe fn panel_click(&mut self) {
-        unsafe {
-            let mut point: POINT = zeroed();
-            GetCursorPos(&mut point);
-            ScreenToClient(self.panel, &mut point);
-            let x = (point.x as f64 / self.scale) as i32;
-            let y = (point.y as f64 / self.scale) as i32;
-            if let Some((provider, session)) = self.session_at(x, y) {
-                self.open_task(&provider, &session);
-            }
-        }
     }
     unsafe fn show_tip(&mut self, point: POINT) {
         unsafe {
@@ -1167,30 +1113,7 @@ impl App {
             let panel = CreatePopupMenu();
             let scale = CreatePopupMenu();
             let notifications = CreatePopupMenu();
-            let tasks = CreatePopupMenu();
-            let mut task_items = Vec::new();
             add(menu, 1, "Показать состояние", false);
-            for p in &self.providers {
-                for session in p.sessions.iter().take(12) {
-                    add(
-                        tasks,
-                        300 + task_items.len(),
-                        &format!("{} · {}", p.name, session.task()),
-                        false,
-                    );
-                    task_items.push((p.name.clone(), session.clone()));
-                }
-            }
-            if task_items.is_empty() {
-                add(tasks, 0, "Нет недавних задач", false);
-                EnableMenuItem(tasks, 0, MF_BYPOSITION | MF_GRAYED);
-            }
-            AppendMenuW(
-                menu,
-                MF_POPUP,
-                tasks as usize,
-                wide("Перейти к задаче").as_ptr(),
-            );
             add(menu, 2, "Открыть папку данных", false);
             for (i, (name, key)) in [
                 ("Искра", "Spark"),
@@ -1212,7 +1135,7 @@ impl App {
             add(
                 color,
                 20,
-                "Оранжевый / цвета агентов",
+                "Цвета установленных агентов",
                 self.settings.color_mode == "Orange",
             );
             add(
@@ -1398,11 +1321,6 @@ impl App {
                     Err(e) => error(&e.to_string()),
                 },
                 99 => PostQuitMessage(0),
-                300..=400 => {
-                    if let Some((provider, session)) = task_items.get((command - 300) as usize) {
-                        self.open_task(provider, session);
-                    }
-                }
                 _ => {}
             }
             if matches!(command,10..=13|20|21|30..=32|40..=44|50..=53|60..=66) {
@@ -1590,10 +1508,10 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
             active_tray: 1,
             notifications: Notifications::default(),
             pending_notices: VecDeque::new(),
-            last_notice: None,
             last_notice_at: Instant::now() - Duration::from_secs(10),
-            bindings: HashMap::new(),
             settings,
+            installed: installed::detect(),
+            last_install_probe: Instant::now(),
             providers,
             shared,
             stop,
@@ -1653,19 +1571,8 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
                             app.show();
                         }
                         NIN_POPUPCLOSE => app.last_hover = Instant::now(),
-                        NIN_BALLOONUSERCLICK => {
-                            if let Some(notice) = app.last_notice.clone() {
-                                if let Some(session) = notice.session {
-                                    app.open_task(&notice.provider, &session);
-                                }
-                            }
-                        }
                         _ => {}
                     }
-                    continue;
-                }
-                WM_LBUTTONUP if msg.hwnd == panel => {
-                    app.panel_click();
                     continue;
                 }
                 _ => {}
@@ -1712,6 +1619,68 @@ mod tests {
         copy_wide(&mut utf16, "😀😀");
         assert!(utf16[0] >= 0xd800 && utf16[0] <= 0xdbff);
         assert_eq!(utf16[2], 0);
+    }
+    #[test]
+    fn installed_palette_splits_every_animation_at_the_middle() {
+        let styles = ["Spark", "Unicode", "Clawd", "Orbit"];
+        for style in styles {
+            for frame in [0, 5] {
+                for (mode, left_red, right_red) in [
+                    ("Orange", true, true),
+                    ("Codex", false, false),
+                    ("Split", true, false),
+                ] {
+                    let settings = Appearance {
+                        animation: style.into(),
+                        color_mode: mode.into(),
+                        ..Default::default()
+                    };
+                    let pixels = icon_pixels(&settings, "thinking", frame);
+                    let (mut left, mut right) = (0, 0);
+                    for (index, pixel) in pixels.chunks_exact(4).enumerate() {
+                        if pixel[3] == 0 {
+                            continue;
+                        }
+                        let x = index % 32;
+                        let red = if x < 16 {
+                            left += 1;
+                            left_red
+                        } else {
+                            right += 1;
+                            right_red
+                        };
+                        assert_eq!(pixel[2] > pixel[0], red, "{style} {mode} x={x}");
+                    }
+                    assert!(left > 0 && right > 0);
+                }
+            }
+        }
+        if let Some(path) = std::env::var_os("CWSB_ICON_PREVIEW") {
+            let canvas = unsafe { Canvas::new(160, 48, 1.) };
+            canvas.fill(0, 0, 160, 48, rgb(28, 28, 32));
+            for (index, style) in styles.iter().enumerate() {
+                let settings = Appearance {
+                    animation: (*style).into(),
+                    color_mode: "Split".into(),
+                    ..Default::default()
+                };
+                let pixels = icon_pixels(&settings, "thinking", 0);
+                for y in 0..32 {
+                    for x in 0..32 {
+                        let source = &pixels[(y * 32 + x) * 4..(y * 32 + x + 1) * 4];
+                        let destination = ((y + 8) * 160 + index * 40 + x + 4) * 4;
+                        for (channel, background) in [32u32, 28, 28].iter().enumerate() {
+                            unsafe {
+                                *canvas.pixels.add(destination + channel) = (source[channel] as u32
+                                    + background * (255 - source[3] as u32) / 255)
+                                    as u8;
+                            }
+                        }
+                    }
+                }
+            }
+            canvas.png(Path::new(&path)).unwrap();
+        }
     }
     #[test]
     fn mouse_title_hit_and_height() {

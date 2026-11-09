@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod installed;
 mod integration;
 mod model;
 mod monitor;
@@ -39,7 +40,7 @@ fn main() {
             let mut monitor = monitor::Monitor::new(model::codex_home());
             let codex = monitor.poll();
             if let Some(path) = args.get(2) {
-                let safe = serde_json::json!({"engine":"Rust","sessionCount":codex.sessions.len(),"titledSessions":codex.sessions.iter().filter(|s|s.title.is_some()).count(),"usage":codex.usage});
+                let safe = serde_json::json!({"engine":"Rust","installedAgents":installed::detect(),"sessionCount":codex.sessions.len(),"titledSessions":codex.sessions.iter().filter(|s|s.title.is_some()).count(),"usage":codex.usage});
                 let _ = model::write_json(std::path::Path::new(path), &safe);
             }
         }
