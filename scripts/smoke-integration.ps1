@@ -35,6 +35,16 @@ try {
     Run-Native '--hook UserPromptSubmit' '{"session_id":"../../test","cwd":"G:\\Проекты\\пример"}' | Out-Null
     $state=Get-ChildItem (Join-Path $testRoot 'sessions') -Filter '*.json'|Get-Content -Raw -Encoding UTF8|ConvertFrom-Json
     if($state.State -ne 'thinking' -or $state.Project -ne 'пример'){throw 'Неверное состояние hook'}
+    $statePath=(Get-ChildItem (Join-Path $testRoot 'sessions') -Filter '*.json'|Select-Object -First 1).FullName
+    $usagePath=Join-Path $testRoot 'usage.json'
+    $beforeState=[Convert]::ToBase64String([IO.File]::ReadAllBytes($statePath))
+    $beforeUsage=[Convert]::ToBase64String([IO.File]::ReadAllBytes($usagePath))
+    [IO.File]::WriteAllText((Join-Path $testRoot 'appearance.json'),'{"TrackClaude":false,"TrackCodex":false}',$utf8)
+    Run-Native '--hook Stop' '{"session_id":"../../test"}' | Out-Null
+    $disabledOutput=Run-Native '--statusline' '{"rate_limits":{"five_hour":{"used_percentage":99,"resets_at":2000000000}}}'
+    if($disabledOutput -cne 'исходная строка'){throw 'Отключение отслеживания повредило исходную statusLine'}
+    if([Convert]::ToBase64String([IO.File]::ReadAllBytes($statePath)) -cne $beforeState){throw 'Отключённый Claude изменяет состояния'}
+    if([Convert]::ToBase64String([IO.File]::ReadAllBytes($usagePath)) -cne $beforeUsage){throw 'Отключённый Claude сохраняет лимиты'}
     Run-Native '--hook Stop' '{broken json' | Out-Null
     Run-Native '--uninstall' | Out-Null
     $restored=Get-Content $settingsPath -Raw -Encoding UTF8|ConvertFrom-Json

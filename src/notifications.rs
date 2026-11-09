@@ -22,8 +22,17 @@ impl Notifications {
         settings: &Appearance,
         now: i64,
     ) -> Vec<Notice> {
+        let active = |name: &str| settings.tracks(name) && providers.iter().any(|p| p.name == name);
+        self.limits.retain(|(provider, _), _| active(provider));
+        self.resets.retain(|(provider, _, _)| active(provider));
+        self.thresholds
+            .retain(|(provider, _, _, _)| active(provider));
+        self.states.retain(|(provider, _), _| active(provider));
         let mut notices = Vec::new();
         for provider in providers {
+            if !settings.tracks(&provider.name) {
+                continue;
+            }
             for session in &provider.sessions {
                 let key = (provider.name.clone(), session.session_id.clone());
                 if let Some(old) = self.states.insert(key, session.state.clone()) {
@@ -213,6 +222,24 @@ mod tests {
         );
         assert!(
             n.observe(&[provider("thinking", 91., 300)], &a, 103)
+                .is_empty()
+        );
+    }
+    #[test]
+    fn disabled_provider_does_not_notify_or_replay_events_on_resume() {
+        let mut n = Notifications::default();
+        let on = Appearance::default();
+        n.observe(&[provider("thinking", 70., 200)], &on, 100);
+        let off = Appearance {
+            track_codex: false,
+            ..Default::default()
+        };
+        assert!(
+            n.observe(&[provider("done", 100., 200)], &off, 201)
+                .is_empty()
+        );
+        assert!(
+            n.observe(&[provider("done", 100., 200)], &on, 202)
                 .is_empty()
         );
     }

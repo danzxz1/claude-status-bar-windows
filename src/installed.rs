@@ -12,11 +12,18 @@ pub struct InstalledAgents {
     pub codex: bool,
 }
 impl InstalledAgents {
+    pub fn tracked(self, settings: &crate::model::Appearance) -> Self {
+        Self {
+            claude: self.claude && settings.track_claude,
+            codex: self.codex && settings.track_codex,
+        }
+    }
     pub fn brand_mode(self) -> &'static str {
         match (self.claude, self.codex) {
             (true, true) => "Split",
             (false, true) => "Codex",
-            _ => "Orange",
+            (true, false) => "Orange",
+            (false, false) => "Neutral",
         }
     }
 }
@@ -159,6 +166,21 @@ mod tests {
             .brand_mode(),
             "Codex"
         );
+    }
+    #[test]
+    fn disabled_agent_changes_the_shared_palette() {
+        let installed = InstalledAgents {
+            claude: true,
+            codex: true,
+        };
+        let mut settings = crate::model::Appearance::default();
+        assert_eq!(installed.tracked(&settings).brand_mode(), "Split");
+        settings.track_codex = false;
+        assert_eq!(installed.tracked(&settings).brand_mode(), "Orange");
+        settings.track_claude = false;
+        assert_eq!(installed.tracked(&settings).brand_mode(), "Neutral");
+        settings.track_codex = true;
+        assert_eq!(installed.tracked(&settings).brand_mode(), "Codex");
     }
     #[test]
     fn settings_directories_are_not_installations() {

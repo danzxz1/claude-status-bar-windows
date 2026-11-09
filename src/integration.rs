@@ -170,6 +170,11 @@ impl Context {
         Ok(())
     }
     pub fn hook(&self, event: &str, p: &Value) -> io::Result<()> {
+        let settings = Appearance::load(&self.root.join("appearance.json"));
+        if !settings.track_claude {
+            return Ok(());
+        }
+
         let Some(id) = p["session_id"].as_str() else {
             return Ok(());
         };
@@ -184,7 +189,8 @@ impl Context {
         if event == "Notification" && p["notification_type"] != "permission_prompt" {
             return Ok(());
         }
-        let old: Option<Session> = read_json(&file);
+        let old: Option<Session> =
+            read_json::<Session>(&file).filter(|s| s.updated_at >= settings.claude_tracking_since);
         let first = old.is_none();
         let mut s = old.unwrap_or_default();
         let action = match event {
@@ -236,6 +242,10 @@ impl Context {
         Ok(())
     }
     pub fn capture_usage(&self, p: &Value) -> io::Result<()> {
+        if !Appearance::load(&self.root.join("appearance.json")).track_claude {
+            return Ok(());
+        }
+
         let Some(limits) = p.get("rate_limits") else {
             return Ok(());
         };
@@ -451,12 +461,20 @@ fn find_claude() -> Option<(u32, i64)> {
     }
 }
 pub fn claude(root: &Path) -> Provider {
+    let settings = Appearance::load(&root.join("appearance.json"));
+    if !settings.track_claude {
+        return Provider {
+            name: "Claude".into(),
+            ..Default::default()
+        };
+    }
+
     let mut sessions = Vec::new();
     if let Ok(entries) = fs::read_dir(root.join("sessions")) {
         for entry in entries.flatten() {
             if entry.path().extension().is_some_and(|e| e == "json") {
                 if let Some(s) = read_json::<Session>(&entry.path()) {
-                    if live(&s) {
+                    if live(&s) && s.updated_at >= settings.claude_tracking_since {
                         sessions.push(s)
                     }
                 }
@@ -467,7 +485,8 @@ pub fn claude(root: &Path) -> Provider {
     Provider {
         name: "Claude".into(),
         sessions,
-        usage: read_json(&root.join("usage.json")),
+        usage: read_json::<Usage>(&root.join("usage.json"))
+            .filter(|u| u.updated_at.timestamp() >= settings.claude_tracking_since),
         notice: None,
     }
 }
@@ -505,6 +524,53 @@ mod tests {
         assert_eq!(u.five_hour.unwrap().used, 42.);
         c.uninstall().unwrap();
         assert_eq!(read_json::<Value>(&c.settings).unwrap(), original);
+        fs::remove_dir_all(c.root).unwrap();
+    }
+    #[test]
+    fn disabled_tracking_preserves_files_and_resuming_ignores_old_state() {
+        let c = ctx();
+        let payload = json!({"session_id":"tracking-test","cwd":"G:\\Проекты\\пример"});
+        c.hook("UserPromptSubmit", &payload).unwrap();
+        c.capture_usage(
+            &json!({"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":2000000000}}}),
+        )
+        .unwrap();
+        let file = fs::read_dir(c.root.join("sessions"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut state: Session = read_json(&file).unwrap();
+        state.updated_at = now() - 100;
+        state.started_at = now() - 100;
+        write_json(&file, &state).unwrap();
+        let state_bytes = fs::read(&file).unwrap();
+        let usage_bytes = fs::read(c.root.join("usage.json")).unwrap();
+        let off = Appearance {
+            track_claude: false,
+            ..Default::default()
+        };
+        off.save(&c.root.join("appearance.json")).unwrap();
+        c.hook("Stop", &payload).unwrap();
+        c.capture_usage(
+            &json!({"rate_limits":{"five_hour":{"used_percentage":99,"resets_at":2000000000}}}),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&file).unwrap(), state_bytes);
+        assert_eq!(fs::read(c.root.join("usage.json")).unwrap(), usage_bytes);
+        assert!(claude(&c.root).sessions.is_empty());
+        let on = Appearance {
+            claude_tracking_since: now(),
+            ..Default::default()
+        };
+        on.save(&c.root.join("appearance.json")).unwrap();
+        assert!(claude(&c.root).sessions.is_empty());
+        assert!(file.exists());
+        c.hook("UserPromptSubmit", &payload).unwrap();
+        assert_eq!(claude(&c.root).sessions.len(), 1);
+        assert!(read_json::<Session>(&file).unwrap().started_at >= on.claude_tracking_since);
+        // Завершение теста удаляет только созданную этим тестом временную папку.
         fs::remove_dir_all(c.root).unwrap();
     }
     #[test]

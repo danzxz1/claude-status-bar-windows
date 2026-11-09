@@ -62,6 +62,9 @@ pub struct Appearance {
     pub show_timer: bool,
     pub show_text: bool,
     pub separate_icons: bool,
+    pub track_claude: bool,
+    pub track_codex: bool,
+    pub claude_tracking_since: i64,
     pub panel_layout: String,
     pub panel_scale: u32,
     pub compact_panel: bool,
@@ -83,6 +86,9 @@ impl Default for Appearance {
             show_timer: true,
             show_text: true,
             separate_icons: false,
+            track_claude: true,
+            track_codex: true,
+            claude_tracking_since: 0,
             panel_layout: "Horizontal".into(),
             panel_scale: 100,
             compact_panel: false,
@@ -99,6 +105,17 @@ impl Default for Appearance {
     }
 }
 impl Appearance {
+    pub fn tracks(&self, provider: &str) -> bool {
+        match provider {
+            "Claude" => self.track_claude,
+            "Codex" => self.track_codex,
+            _ => false,
+        }
+    }
+    pub fn tracking_bits(&self) -> u8 {
+        u8::from(self.track_claude) | (u8::from(self.track_codex) << 1)
+    }
+
     pub fn load(path: &Path) -> Self {
         let mut value: Self = read_json(path).unwrap_or_default();
         if !["Spark", "Unicode", "Clawd", "Orbit"].contains(&value.animation.as_str()) {
@@ -275,5 +292,7 @@ mod tests {
         assert!(a.show_claude && a.show_codex);
         assert!(!a.sound);
         assert!(!a.separate_icons);
+        assert!(a.track_claude && a.track_codex);
+        assert_eq!(a.tracking_bits(), 3);
     }
 }

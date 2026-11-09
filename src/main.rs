@@ -37,8 +37,15 @@ fn main() {
             }
         }
         Some("--diagnostics") => {
-            let mut monitor = monitor::Monitor::new(model::codex_home());
-            let codex = monitor.poll();
+            let settings = model::Appearance::load(&model::data_dir().join("appearance.json"));
+            let codex = if settings.track_codex {
+                monitor::Monitor::new(model::codex_home()).poll()
+            } else {
+                model::Provider {
+                    name: "Codex".into(),
+                    ..Default::default()
+                }
+            };
             if let Some(path) = args.get(2) {
                 let safe = serde_json::json!({"engine":"Rust","installedAgents":installed::detect(),"sessionCount":codex.sessions.len(),"titledSessions":codex.sessions.iter().filter(|s|s.title.is_some()).count(),"usage":codex.usage});
                 let _ = model::write_json(std::path::Path::new(path), &safe);

@@ -17,7 +17,7 @@ use std::{
     ptr::{null, null_mut},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -242,6 +242,9 @@ fn regions(providers: &[Provider], settings: &Appearance) -> Vec<(usize, i32, i3
     let mut result = Vec::new();
     let mut y = 0;
     for (index, provider) in providers.iter().enumerate() {
+        if !settings.tracks(&provider.name) {
+            continue;
+        }
         if (provider.name == "Claude" && !settings.show_claude)
             || (provider.name == "Codex" && !settings.show_codex)
         {
@@ -290,6 +293,40 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
     let (width, height) = panel_size(providers, settings);
     canvas.offset.set((0, 0));
     canvas.fill(0, 0, width, height, bg);
+    if regions(providers, settings).is_empty() {
+        let disabled = settings.tracking_bits() == 0;
+        canvas.text(
+            if disabled {
+                "Отслеживание выключено"
+            } else {
+                "Нет отображаемых блоков"
+            },
+            18,
+            20,
+            width - 36,
+            32,
+            18,
+            white,
+            true,
+            single,
+        );
+        canvas.text(
+            if disabled {
+                "Включите Claude или Codex в меню «Отслеживание»."
+            } else {
+                "Проверьте отслеживание и выбор блоков в меню по ПКМ."
+            },
+            18,
+            65,
+            width - 36,
+            70,
+            13,
+            muted,
+            false,
+            DT_WORDBREAK,
+        );
+    }
+
     for (index, x, y, block_height) in regions(providers, settings) {
         canvas.offset.set((x, y));
         let p = &providers[index];
@@ -531,6 +568,8 @@ fn icon_pixels(settings: &Appearance, state: &str, frame: u32) -> Vec<u8> {
         system_color()
     } else if settings.color_mode == "Codex" {
         [130, 188, 242]
+    } else if settings.color_mode == "Neutral" {
+        [150, 150, 160]
     } else {
         [218, 151, 124]
     };
@@ -647,6 +686,7 @@ struct App {
     pending_notices: VecDeque<Notice>,
     last_notice_at: Instant,
     settings: Appearance,
+    tracking: Arc<AtomicU8>,
     installed: InstalledAgents,
     last_install_probe: Instant,
     providers: Vec<Provider>,
@@ -679,7 +719,9 @@ impl App {
             data.hIcon = icon;
             copy_wide(
                 &mut data.szTip,
-                if self.settings.separate_icons {
+                if self.settings.tracking_bits() == 0 {
+                    "Отслеживание выключено"
+                } else if self.settings.separate_icons {
                     if id == 1 { "Claude Code" } else { "Codex" }
                 } else {
                     "Claude + Codex"
@@ -701,11 +743,13 @@ impl App {
     }
     fn icon_settings(&self, id: u32) -> Appearance {
         let mut settings = self.settings.clone();
-        if settings.color_mode == "Orange" {
+        if self.settings.tracking_bits() == 0 {
+            settings.color_mode = "Neutral".into();
+        } else if settings.color_mode == "Orange" {
             settings.color_mode = if self.settings.separate_icons {
                 if id == 2 { "Codex" } else { "Orange" }
             } else {
-                self.installed.brand_mode()
+                self.installed.tracked(&self.settings).brand_mode()
             }
             .into();
         }
@@ -721,11 +765,20 @@ impl App {
             }
             let ids = if self.settings.separate_icons {
                 let mut ids = Vec::new();
-                if self.settings.show_claude {
+                if self.settings.show_claude && self.settings.track_claude {
                     ids.push(1);
                 }
-                if self.settings.show_codex {
+                if self.settings.show_codex && self.settings.track_codex {
                     ids.push(2);
+                }
+                if ids.is_empty() {
+                    ids.push(
+                        if self.settings.track_codex && !self.settings.track_claude {
+                            2
+                        } else {
+                            1
+                        },
+                    );
                 }
                 ids
             } else {
@@ -749,6 +802,7 @@ impl App {
                 let selected = self
                     .providers
                     .iter()
+                    .filter(|p| self.settings.tracks(&p.name))
                     .filter(|p| {
                         if self.settings.separate_icons {
                             p.name == if id == 1 { "Claude" } else { "Codex" }
@@ -928,6 +982,7 @@ impl App {
                         .unwrap_or_else(|e| e.into_inner())
                         .clone()
                 };
+                self.providers.retain(|p| self.settings.tracks(&p.name));
                 self.last_update = Instant::now();
                 if !self.demo {
                     for notice in self
@@ -1107,6 +1162,25 @@ impl App {
             self.pinned = false;
             self.hide();
             let menu = CreatePopupMenu();
+            let tracking_menu = CreatePopupMenu();
+            add(
+                tracking_menu,
+                80,
+                "Отслеживать Claude",
+                self.settings.track_claude,
+            );
+            add(
+                tracking_menu,
+                81,
+                "Отслеживать Codex",
+                self.settings.track_codex,
+            );
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                tracking_menu as usize,
+                wide("Отслеживание").as_ptr(),
+            );
             let appearance = CreatePopupMenu();
             let animation = CreatePopupMenu();
             let color = CreatePopupMenu();
@@ -1270,6 +1344,8 @@ impl App {
                 self.settings.separate_icons,
                 self.settings.show_claude,
                 self.settings.show_codex,
+                self.settings.track_claude,
+                self.settings.track_codex,
             );
             match command {
                 1 => {
@@ -1312,6 +1388,13 @@ impl App {
                 64 => self.settings.notify_reset = !self.settings.notify_reset,
                 65 => self.settings.sound = !self.settings.sound,
                 66 => self.settings.quiet = !self.settings.quiet,
+                80 => {
+                    self.settings.track_claude = !self.settings.track_claude;
+                    if self.settings.track_claude {
+                        self.settings.claude_tracking_since = now();
+                    }
+                }
+                81 => self.settings.track_codex = !self.settings.track_codex,
                 70 => match std::env::current_exe() {
                     Ok(exe) => {
                         if let Err(e) = system::set_autostart(!system::autostart_enabled(), &exe) {
@@ -1323,9 +1406,16 @@ impl App {
                 99 => PostQuitMessage(0),
                 _ => {}
             }
-            if matches!(command,10..=13|20|21|30..=32|40..=44|50..=53|60..=66) {
+            if matches!(command,10..=13|20|21|30..=32|40..=44|50..=53|60..=66|80|81) {
                 if let Err(e) = self.settings.save(&data_dir().join("appearance.json")) {
                     error(&format!("Не удалось сохранить настройки: {e}"));
+                }
+                if matches!(command, 80 | 81) {
+                    self.tracking
+                        .store(self.settings.tracking_bits(), Ordering::Relaxed);
+                    self.providers.retain(|p| self.settings.tracks(&p.name));
+                    self.pending_notices
+                        .retain(|n| self.settings.tracks(&n.provider));
                 }
                 self.frame = 0;
                 if old_icons
@@ -1333,6 +1423,8 @@ impl App {
                         self.settings.separate_icons,
                         self.settings.show_claude,
                         self.settings.show_codex,
+                        self.settings.track_claude,
+                        self.settings.track_codex,
                     )
                 {
                     self.rebuild_icons();
@@ -1463,7 +1555,9 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
             CloseHandle(mutex);
             return Err("Не удалось создать окна приложения".into());
         }
-        let shared = Arc::new(Mutex::new(if is_demo {
+        let settings = Appearance::load(&data_dir().join("appearance.json"));
+        let tracking = Arc::new(AtomicU8::new(settings.tracking_bits()));
+        let initial = if is_demo {
             demo()
         } else {
             vec![
@@ -1476,20 +1570,40 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
                     ..Default::default()
                 },
             ]
-        }));
+        };
+        let shared = Arc::new(Mutex::new(
+            initial
+                .into_iter()
+                .filter(|p| settings.tracks(&p.name))
+                .collect::<Vec<_>>(),
+        ));
         let stop = Arc::new(AtomicBool::new(false));
         let worker = if is_demo {
             None
         } else {
-            let shared = shared.clone();
-            let stop = stop.clone();
+            let (shared, stop, tracking) = (shared.clone(), stop.clone(), tracking.clone());
             Some(thread::spawn(move || {
-                let mut codex = Monitor::new(codex_home());
+                let mut codex: Option<Monitor> = None;
                 while !stop.load(Ordering::Relaxed) {
-                    let providers = vec![integration::claude(&data_dir()), codex.poll()];
+                    let enabled = tracking.load(Ordering::Relaxed);
+                    let mut providers = Vec::new();
+                    if enabled & 1 != 0 {
+                        providers.push(integration::claude(&data_dir()));
+                    }
+                    if enabled & 2 != 0 {
+                        providers.push(
+                            codex
+                                .get_or_insert_with(|| Monitor::new(codex_home()))
+                                .poll(),
+                        );
+                    } else {
+                        codex = None;
+                    }
                     *shared.lock().unwrap_or_else(|e| e.into_inner()) = providers;
                     for _ in 0..15 {
-                        if stop.load(Ordering::Relaxed) {
+                        if stop.load(Ordering::Relaxed)
+                            || tracking.load(Ordering::Relaxed) != enabled
+                        {
                             break;
                         }
                         thread::sleep(Duration::from_millis(100));
@@ -1497,7 +1611,6 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
                 }
             }))
         };
-        let settings = Appearance::load(&data_dir().join("appearance.json"));
         let providers = shared.lock().unwrap().clone();
         let mut app = App {
             owner,
@@ -1510,6 +1623,7 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
             pending_notices: VecDeque::new(),
             last_notice_at: Instant::now() - Duration::from_secs(10),
             settings,
+            tracking,
             installed: installed::detect(),
             last_install_probe: Instant::now(),
             providers,
@@ -1681,6 +1795,20 @@ mod tests {
             }
             canvas.png(Path::new(&path)).unwrap();
         }
+    }
+    #[test]
+    fn tracking_off_has_a_visible_panel_and_no_agent_regions() {
+        let settings = Appearance {
+            track_claude: false,
+            track_codex: false,
+            ..Default::default()
+        };
+        let providers = demo();
+        assert!(regions(&providers, &settings).is_empty());
+        assert_eq!(panel_size(&providers, &settings), (370, 292));
+        let canvas = unsafe { Canvas::new(370, 292, 1.) };
+        draw_panel(&canvas, &providers, &settings);
+        assert_eq!(settings.tracking_bits(), 0);
     }
     #[test]
     fn mouse_title_hit_and_height() {
