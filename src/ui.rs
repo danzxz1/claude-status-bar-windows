@@ -1,6 +1,14 @@
-use crate::{integration, model::*, monitor::Monitor};
+use crate::{
+    integration,
+    model::*,
+    monitor::Monitor,
+    notifications::{Notice, Notifications},
+    system,
+};
 use chrono::Local;
 use std::{
+    cell::Cell,
+    collections::{HashMap, VecDeque},
     fs::File,
     io::BufWriter,
     mem::{size_of, zeroed},
@@ -24,6 +32,18 @@ const QUEUED_CALLBACK: u32 = WM_APP + 2;
 const QUEUED_TASKBAR: u32 = WM_APP + 3;
 static TASKBAR_MESSAGE: AtomicU32 = AtomicU32::new(0);
 const NIN_KEYSELECT: u32 = 1025;
+fn copy_wide<const N: usize>(target: &mut [u16; N], text: &str) {
+    let mut offset = 0;
+    for ch in text.chars() {
+        let mut pair = [0; 2];
+        let units = ch.encode_utf16(&mut pair);
+        if offset + units.len() >= N {
+            break;
+        }
+        target[offset..offset + units.len()].copy_from_slice(units);
+        offset += units.len();
+    }
+}
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -81,6 +101,7 @@ struct Canvas {
     width: i32,
     height: i32,
     scale: f64,
+    offset: Cell<(i32, i32)>,
 }
 impl Canvas {
     unsafe fn new(width: i32, height: i32, scale: f64) -> Self {
@@ -104,6 +125,7 @@ impl Canvas {
                 width,
                 height,
                 scale,
+                offset: Cell::new((0, 0)),
             }
         }
     }
@@ -115,7 +137,12 @@ impl Canvas {
             let brush = CreateSolidBrush(color);
             FillRect(
                 self.dc,
-                &rect(self.n(x), self.n(y), self.n(w), self.n(h)),
+                &rect(
+                    self.n(x + self.offset.get().0),
+                    self.n(y + self.offset.get().1),
+                    self.n(w),
+                    self.n(h),
+                ),
                 brush,
             );
             DeleteObject(brush);
@@ -159,7 +186,12 @@ impl Canvas {
                 self.dc,
                 text.as_ptr(),
                 (text.len() - 1) as i32,
-                &mut rect(self.n(x), self.n(y), self.n(width), self.n(height)),
+                &mut rect(
+                    self.n(x + self.offset.get().0),
+                    self.n(y + self.offset.get().1),
+                    self.n(width),
+                    self.n(height),
+                ),
                 flags | DT_NOPREFIX,
             );
             SelectObject(self.dc, old);
@@ -197,26 +229,73 @@ impl Drop for Canvas {
         }
     }
 }
-fn panel_height(providers: &[Provider]) -> i32 {
-    334 + providers
+fn provider_height(provider: &Provider, settings: &Appearance) -> i32 {
+    if settings.compact_panel {
+        292
+    } else {
+        334 + (provider.sessions.len().min(3) + usize::from(provider.sessions.len() > 3)) as i32
+            * 24
+    }
+}
+fn regions(providers: &[Provider], settings: &Appearance) -> Vec<(usize, i32, i32, i32)> {
+    let mut result = Vec::new();
+    let mut y = 0;
+    for (index, provider) in providers.iter().enumerate() {
+        if (provider.name == "Claude" && !settings.show_claude)
+            || (provider.name == "Codex" && !settings.show_codex)
+        {
+            continue;
+        }
+        let height = provider_height(provider, settings);
+        let x = if settings.panel_layout == "Vertical" {
+            0
+        } else {
+            result.len() as i32 * 370
+        };
+        result.push((
+            index,
+            x,
+            if settings.panel_layout == "Vertical" {
+                y
+            } else {
+                0
+            },
+            height,
+        ));
+        y += height;
+    }
+    result
+}
+fn panel_size(providers: &[Provider], settings: &Appearance) -> (i32, i32) {
+    let regions = regions(providers, settings);
+    let width = regions
         .iter()
-        .map(|p| p.sessions.len().min(3) + usize::from(p.sessions.len() > 3))
+        .map(|(_, x, _, _)| x + 370)
         .max()
-        .unwrap_or(0) as i32
-        * 24
+        .unwrap_or(370);
+    let height = regions
+        .iter()
+        .map(|(_, _, y, h)| y + h)
+        .max()
+        .unwrap_or(292);
+    (width, height)
 }
 fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
     let bg = rgb(28, 28, 32);
     let muted = rgb(158, 158, 170);
     let white = rgb(238, 238, 242);
     let single = DT_SINGLELINE | DT_END_ELLIPSIS;
-    canvas.fill(0, 0, 740, canvas.height, bg);
-    for (index, p) in providers.iter().enumerate() {
-        let x = index as i32 * 370;
+    let border = rgb(62, 62, 70);
+    let (width, height) = panel_size(providers, settings);
+    canvas.offset.set((0, 0));
+    canvas.fill(0, 0, width, height, bg);
+    for (index, x, y, block_height) in regions(providers, settings) {
+        canvas.offset.set((x, y));
+        let p = &providers[index];
         let selected = p.sessions.first();
         canvas.text(
             &p.name,
-            x + 18,
+            18,
             14,
             334,
             26,
@@ -231,12 +310,12 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
         );
         canvas.text(
             selected.map(|s| s.task()).unwrap_or("Нет недавних сессий"),
-            x + 18,
+            18,
             44,
             334,
             24,
             13,
-            white,
+            rgb(175, 210, 242),
             false,
             single,
         );
@@ -259,7 +338,7 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
         }
         canvas.text(
             &status,
-            x + 18,
+            18,
             68,
             334,
             24,
@@ -276,14 +355,14 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
             canvas,
             "5 часов",
             p.usage.as_ref().and_then(|u| u.five_hour.as_ref()),
-            x,
+            0,
             108,
         );
         draw_limit(
             canvas,
             "7 дней",
             p.usage.as_ref().and_then(|u| u.seven_day.as_ref()),
-            x,
+            0,
             185,
         );
         let updated = p
@@ -296,32 +375,16 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
                 )
             })
             .unwrap_or(format!("Лимиты появятся после ответа {}", p.name));
-        canvas.text(&updated, x + 18, 261, 334, 24, 12, muted, false, single);
-        canvas.text(
-            p.notice.as_deref().unwrap_or(if p.name == "Codex" {
-                "Состояние по локальным событиям"
-            } else {
-                "Состояние по событиям Claude Code"
-            }),
-            x + 18,
-            283,
-            334,
-            24,
-            12,
-            muted,
-            false,
-            single,
-        );
-        for (i, s) in p.sessions.iter().take(3).enumerate() {
-            let row = if settings.show_text {
-                format!("{} · {}", s.task(), s.label)
-            } else {
-                s.task().into()
-            };
+        canvas.text(&updated, 18, 261, 334, 24, 12, muted, false, single);
+        if !settings.compact_panel {
             canvas.text(
-                &row,
-                x + 18,
-                313 + i as i32 * 24,
+                p.notice.as_deref().unwrap_or(if p.name == "Codex" {
+                    "Состояние по локальным событиям"
+                } else {
+                    "Состояние по событиям Claude Code"
+                }),
+                18,
+                283,
                 334,
                 24,
                 12,
@@ -329,39 +392,50 @@ fn draw_panel(canvas: &Canvas, providers: &[Provider], settings: &Appearance) {
                 false,
                 single,
             );
+            for (i, s) in p.sessions.iter().take(3).enumerate() {
+                let row = if settings.show_text {
+                    format!("{} · {}", s.task(), s.label)
+                } else {
+                    s.task().into()
+                };
+                canvas.text(
+                    &row,
+                    18,
+                    313 + i as i32 * 24,
+                    334,
+                    24,
+                    12,
+                    rgb(175, 210, 242),
+                    false,
+                    single,
+                );
+            }
+            if p.sessions.len() > 3 {
+                canvas.text(
+                    &format!("Ещё сессий: {}", p.sessions.len() - 3),
+                    18,
+                    385,
+                    334,
+                    24,
+                    12,
+                    muted,
+                    false,
+                    single,
+                );
+            }
         }
-        if p.sessions.len() > 3 {
-            canvas.text(
-                &format!("Ещё сессий: {}", p.sessions.len() - 3),
-                x + 18,
-                385,
-                334,
-                24,
-                12,
-                muted,
-                false,
-                single,
-            );
+        if x > 0 {
+            canvas.fill(0, 12, 1, block_height - 24, border);
+        }
+        if y > 0 {
+            canvas.fill(12, 0, 346, 1, border);
         }
     }
-    let border = rgb(62, 62, 70);
-    canvas.fill(0, 0, 740, 1, border);
-    canvas.fill(0, 0, 1, canvas.height, border);
-    canvas.fill(739, 0, 1, canvas.height, border);
-    canvas.fill(
-        0,
-        (canvas.height as f64 / canvas.scale) as i32 - 1,
-        740,
-        1,
-        border,
-    );
-    canvas.fill(
-        370,
-        12,
-        1,
-        (canvas.height as f64 / canvas.scale) as i32 - 24,
-        border,
-    );
+    canvas.offset.set((0, 0));
+    canvas.fill(0, 0, width, 1, border);
+    canvas.fill(0, 0, 1, height, border);
+    canvas.fill(width - 1, 0, 1, height, border);
+    canvas.fill(0, height - 1, width, 1, border);
 }
 fn draw_limit(c: &Canvas, label: &str, limit: Option<&Limit>, x: i32, y: i32) {
     let valid = limit.filter(|l| l.resets_at > now() && l.used.is_finite());
@@ -454,9 +528,26 @@ fn system_color() -> [u8; 3] {
 fn icon_pixels(settings: &Appearance, state: &str, frame: u32) -> Vec<u8> {
     let color = if settings.color_mode == "System" {
         system_color()
+    } else if settings.color_mode == "Codex" {
+        [130, 188, 242]
     } else {
         [218, 151, 124]
     };
+    let spark: Vec<_> = (0..10)
+        .map(|i| {
+            let angle = i as f64 * std::f64::consts::PI / 5. + frame as f64 * 0.10;
+            (angle.cos(), angle.sin())
+        })
+        .collect();
+    let orbit: Vec<_> = (0..3)
+        .map(|i| {
+            let angle = i as f64 * std::f64::consts::TAU / 3. + frame as f64 * 0.16;
+            let radius = 7. + (frame as f64 * 0.12).sin() * 2.;
+            (angle.cos() * radius, angle.sin() * radius)
+        })
+        .collect();
+    let angle = (frame / 2 % 4) as f64 * std::f64::consts::FRAC_PI_4;
+    let (spinner_cos, spinner_sin) = (angle.cos(), angle.sin());
     let mut pixels = vec![0u8; 32 * 32 * 4];
     for y in 0..32 {
         for x in 0..32 {
@@ -468,11 +559,9 @@ fn icon_pixels(settings: &Appearance, state: &str, frame: u32) -> Vec<u8> {
                     let dx = px - 16.;
                     let dy = py - 16.;
                     let on = match settings.animation.as_str() {
-                        "Orbit" => (0..3).any(|i| {
-                            let a = i as f64 * std::f64::consts::TAU / 3. + frame as f64 * 0.16;
-                            let r = 7. + (frame as f64 * 0.12).sin() * 2.;
-                            (dx - a.cos() * r).powi(2) + (dy - a.sin() * r).powi(2) < 10.
-                        }),
+                        "Orbit" => orbit
+                            .iter()
+                            .any(|(x, y)| (dx - x).powi(2) + (dy - y).powi(2) < 10.),
                         "Clawd" => {
                             let step = if frame == 0 {
                                 0.
@@ -492,15 +581,13 @@ fn icon_pixels(settings: &Appearance, state: &str, frame: u32) -> Vec<u8> {
                             (body && !eyes) || claws || legs
                         }
                         "Unicode" => {
-                            let a = (frame / 2 % 4) as f64 * std::f64::consts::FRAC_PI_4;
-                            let along = dx * a.sin() + dy * a.cos();
-                            let cross = dx * a.cos() - dy * a.sin();
+                            let along = dx * spinner_sin + dy * spinner_cos;
+                            let cross = dx * spinner_cos - dy * spinner_sin;
                             along.abs() < 12. && cross.abs() < 1.6
                         }
-                        _ => (0..10).any(|i| {
-                            let a = i as f64 * std::f64::consts::PI / 5. + frame as f64 * 0.10;
-                            let along = dx * a.cos() + dy * a.sin();
-                            let cross = -dx * a.sin() + dy * a.cos();
+                        _ => spark.iter().any(|(cos, sin)| {
+                            let along = dx * cos + dy * sin;
+                            let cross = -dx * sin + dy * cos;
                             (5. ..13.).contains(&along) && cross.abs() < 1.45
                         }),
                     };
@@ -546,7 +633,14 @@ struct App {
     owner: HWND,
     panel: HWND,
     tip: HWND,
-    icon: HICON,
+    icons: Vec<(u32, HICON)>,
+    icon_signatures: HashMap<u32, String>,
+    active_tray: u32,
+    notifications: Notifications,
+    pending_notices: VecDeque<Notice>,
+    last_notice: Option<Notice>,
+    last_notice_at: Instant,
+    bindings: HashMap<String, usize>,
     settings: Appearance,
     providers: Vec<Provider>,
     shared: Arc<Mutex<Vec<Provider>>>,
@@ -567,17 +661,23 @@ struct App {
     menu_active: bool,
 }
 impl App {
-    unsafe fn notify(&self, action: u32) {
+    unsafe fn notify_one(&self, action: u32, id: u32, icon: HICON) {
         unsafe {
             let mut data: NOTIFYICONDATAW = zeroed();
             data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
             data.hWnd = self.owner;
-            data.uID = 1;
+            data.uID = id;
             data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-            let label = wide("Claude + Codex");
-            data.szTip[..label.len()].copy_from_slice(&label);
             data.uCallbackMessage = CALLBACK;
-            data.hIcon = self.icon;
+            data.hIcon = icon;
+            copy_wide(
+                &mut data.szTip,
+                if self.settings.separate_icons {
+                    if id == 1 { "Claude Code" } else { "Codex" }
+                } else {
+                    "Claude + Codex"
+                },
+            );
             Shell_NotifyIconW(action, &data);
             if action == NIM_ADD {
                 data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
@@ -585,26 +685,175 @@ impl App {
             }
         }
     }
+    unsafe fn notify(&self, action: u32) {
+        unsafe {
+            for (id, icon) in &self.icons {
+                self.notify_one(action, *id, *icon);
+            }
+        }
+    }
+    unsafe fn rebuild_icons(&mut self) {
+        unsafe {
+            self.icon_signatures.clear();
+            let old = std::mem::take(&mut self.icons);
+            for (id, icon) in old {
+                self.notify_one(NIM_DELETE, id, icon);
+                DestroyIcon(icon);
+            }
+            let ids = if self.settings.separate_icons {
+                let mut ids = Vec::new();
+                if self.settings.show_claude {
+                    ids.push(1);
+                }
+                if self.settings.show_codex {
+                    ids.push(2);
+                }
+                ids
+            } else {
+                vec![1]
+            };
+            for id in ids {
+                let icon = make_icon(&self.settings, "idle", 0);
+                self.icons.push((id, icon));
+                self.notify_one(NIM_ADD, id, icon);
+            }
+            if !self.icons.iter().any(|(id, _)| *id == self.active_tray) {
+                self.active_tray = self.icons.first().map(|(id, _)| *id).unwrap_or(1);
+            }
+        }
+    }
     unsafe fn update_icon(&mut self) {
         unsafe {
-            let selected = self
-                .providers
-                .iter()
-                .flat_map(|p| &p.sessions)
-                .max_by_key(|s| (s.priority(), s.updated_at));
-            let state = selected.map(|s| s.state.as_str()).unwrap_or("idle");
-            let frame = if selected.is_some_and(|s| s.busy()) {
-                self.frame += 1;
-                self.frame
-            } else {
-                0
-            };
-            let icon = make_icon(&self.settings, state, frame);
-            let old = self.icon;
-            self.icon = icon;
-            self.notify(NIM_MODIFY);
-            if !old.is_null() {
+            self.frame = self.frame.wrapping_add(1);
+            for index in 0..self.icons.len() {
+                let id = self.icons[index].0;
+                let selected = self
+                    .providers
+                    .iter()
+                    .filter(|p| {
+                        if self.settings.separate_icons {
+                            p.name == if id == 1 { "Claude" } else { "Codex" }
+                        } else {
+                            (p.name == "Claude" && self.settings.show_claude)
+                                || (p.name == "Codex" && self.settings.show_codex)
+                        }
+                    })
+                    .flat_map(|p| &p.sessions)
+                    .max_by_key(|s| (s.priority(), s.updated_at));
+                let state = selected.map(|s| s.state.as_str()).unwrap_or("idle");
+                let frame = if selected.is_some_and(|s| s.busy()) {
+                    self.frame
+                } else {
+                    0
+                };
+                let mut settings = self.settings.clone();
+                if self.settings.separate_icons && id == 2 && settings.color_mode == "Orange" {
+                    settings.color_mode = "Codex".into();
+                }
+                let signature = format!(
+                    "{}:{}:{}:{}:{:?}",
+                    settings.animation,
+                    settings.color_mode,
+                    state,
+                    frame,
+                    if settings.color_mode == "System" {
+                        system_color()
+                    } else {
+                        [0, 0, 0]
+                    }
+                );
+                if self.icon_signatures.get(&id) == Some(&signature) {
+                    continue;
+                }
+                self.icon_signatures.insert(id, signature);
+                let icon = make_icon(&settings, state, frame);
+                let old = self.icons[index].1;
+                self.icons[index].1 = icon;
+                self.notify_one(NIM_MODIFY, id, icon);
                 DestroyIcon(old);
+            }
+        }
+    }
+    unsafe fn show_notice(&mut self, notice: Notice) {
+        unsafe {
+            let mut data: NOTIFYICONDATAW = zeroed();
+            data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
+            data.hWnd = self.owner;
+            data.uID = if self.settings.separate_icons
+                && notice.provider == "Codex"
+                && self.settings.show_codex
+            {
+                2
+            } else {
+                self.icons.first().map(|(id, _)| *id).unwrap_or(1)
+            };
+            data.uFlags = NIF_INFO;
+            data.dwInfoFlags = NIIF_INFO | if self.settings.sound { 0 } else { NIIF_NOSOUND };
+            copy_wide(&mut data.szInfoTitle, &notice.title);
+            copy_wide(&mut data.szInfo, &notice.text);
+            Shell_NotifyIconW(NIM_MODIFY, &data);
+            self.last_notice = Some(notice);
+            self.last_notice_at = Instant::now();
+        }
+    }
+    unsafe fn open_task(&mut self, provider: &str, session: &Session) {
+        unsafe {
+            self.hide();
+            let key = format!("{provider}:{}", session.session_id);
+            if let Some(hwnd) = self.bindings.get(&key) {
+                if system::activate(*hwnd) {
+                    return;
+                }
+                self.bindings.remove(&key);
+            }
+            let candidates = system::candidates(provider, session);
+            if let Some(first) = candidates.first() {
+                if first.score >= 80
+                    && candidates
+                        .get(1)
+                        .is_none_or(|next| first.score > next.score)
+                    && system::activate(first.hwnd)
+                {
+                    self.bindings.insert(key, first.hwnd);
+                    return;
+                }
+            }
+            if candidates.is_empty() {
+                error(
+                    "Не найдено доступное окно. Откройте окно агента или терминала и повторите щелчок.",
+                );
+                return;
+            }
+            let menu = CreatePopupMenu();
+            add(menu, 0, "Выберите окно задачи", false);
+            EnableMenuItem(menu, 0, MF_BYPOSITION | MF_GRAYED);
+            AppendMenuW(menu, MF_SEPARATOR, 0, null());
+            for (index, target) in candidates.iter().take(30).enumerate() {
+                add(menu, 1000 + index, &target.title, false);
+            }
+            let mut point: POINT = zeroed();
+            GetCursorPos(&mut point);
+            self.menu_active = true;
+            SetForegroundWindow(self.owner);
+            let command = TrackPopupMenu(
+                menu,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                point.x,
+                point.y,
+                0,
+                self.owner,
+                null(),
+            );
+            DestroyMenu(menu);
+            self.menu_active = false;
+            self.last_hover = Instant::now();
+            PostMessageW(self.owner, WM_NULL, 0, 0);
+            if command >= 1000 {
+                if let Some(target) = candidates.get((command - 1000) as usize) {
+                    if system::activate(target.hwnd) {
+                        self.bindings.insert(key, target.hwnd);
+                    }
+                }
             }
         }
     }
@@ -652,7 +901,7 @@ impl App {
             let id = NOTIFYICONIDENTIFIER {
                 cbSize: size_of::<NOTIFYICONIDENTIFIER>() as u32,
                 hWnd: self.owner,
-                uID: 1,
+                uID: self.active_tray,
                 guidItem: zeroed(),
             };
             let mut r = zeroed();
@@ -671,11 +920,15 @@ impl App {
             let mut point: POINT = zeroed();
             GetCursorPos(&mut point);
             let area = work_area(point);
-            self.scale = (GetDpiForWindow(self.owner) as f64 / 96.)
-                .min((area.right - area.left) as f64 / 740.)
-                .max(0.5);
-            let w = (740. * self.scale) as i32;
-            let h = (panel_height(&self.providers) as f64 * self.scale) as i32;
+            let (width, height) = panel_size(&self.providers, &self.settings);
+            self.scale = (GetDpiForWindow(self.owner) as f64 / 96.
+                * self.settings.panel_scale as f64
+                / 100.)
+                .min((area.right - area.left) as f64 / width as f64)
+                .min((area.bottom - area.top) as f64 / height as f64)
+                .max(0.25);
+            let w = (width as f64 * self.scale) as i32;
+            let h = (height as f64 * self.scale) as i32;
             let anchor = self.tray_rect().unwrap_or(rect(point.x, point.y, 1, 1));
             let x = ((anchor.left + anchor.right - w) / 2)
                 .clamp(area.left, (area.right - w).max(area.left));
@@ -718,10 +971,25 @@ impl App {
                         .clone()
                 };
                 self.last_update = Instant::now();
+                if !self.demo {
+                    for notice in self
+                        .notifications
+                        .observe(&self.providers, &self.settings, now())
+                    {
+                        if self.pending_notices.len() < 20 {
+                            self.pending_notices.push_back(notice);
+                        }
+                    }
+                }
+                if self.settings.quiet || !self.settings.notifications {
+                    self.pending_notices.clear();
+                }
                 if self.visible {
+                    InvalidateRect(self.panel, null(), 0);
                     let mut r: RECT = zeroed();
                     GetWindowRect(self.panel, &mut r);
-                    let height = (panel_height(&self.providers) as f64 * self.scale) as i32;
+                    let height =
+                        (panel_size(&self.providers, &self.settings).1 as f64 * self.scale) as i32;
                     if r.bottom - r.top != height {
                         let point = POINT {
                             x: r.left,
@@ -746,6 +1014,11 @@ impl App {
             if self.menu_active {
                 return;
             }
+            if self.last_notice_at.elapsed() >= Duration::from_secs(8) {
+                if let Some(notice) = self.pending_notices.pop_front() {
+                    self.show_notice(notice);
+                }
+            }
             let mut point: POINT = zeroed();
             GetCursorPos(&mut point);
             let mut panel: RECT = zeroed();
@@ -755,9 +1028,6 @@ impl App {
             let over_tray = self.tray_rect().is_some_and(|r| inside(point, r));
             let over_panel = self.visible && inside(point, panel);
             let over_tip = IsWindowVisible(self.tip) != 0 && inside(point, tip);
-            if self.visible {
-                InvalidateRect(self.panel, null(), 0);
-            }
             if self.pinned
                 && (GetAsyncKeyState(1) as u16 & 0x8000) != 0
                 && !over_tray
@@ -794,33 +1064,43 @@ impl App {
             }
         }
     }
-    fn title_at(&self, x: i32, y: i32) -> String {
-        let Some(p) = self.providers.get((x / 370).max(0) as usize) else {
-            return String::new();
-        };
-        if x % 370 < 18 || x % 370 > 352 {
-            return String::new();
-        }
-        if (44..68).contains(&y) {
-            return p
-                .sessions
-                .first()
-                .map(|s| s.task().into())
-                .unwrap_or_default();
-        }
-        if y >= 313 {
-            let i = ((y - 313) / 24) as usize;
-            if i < 3 {
-                if let Some(s) = p.sessions.get(i) {
-                    return if self.settings.show_text {
-                        format!("{} · {}", s.task(), s.label)
-                    } else {
-                        s.task().into()
-                    };
-                }
+    fn session_at(&self, x: i32, y: i32) -> Option<(String, Session)> {
+        for (index, left, top, height) in regions(&self.providers, &self.settings) {
+            let localx = x - left;
+            let localy = y - top;
+            if !(18..352).contains(&localx) || !(0..height).contains(&localy) {
+                continue;
+            }
+            let p = &self.providers[index];
+            let session = if (44..68).contains(&localy) {
+                p.sessions.first()
+            } else if !self.settings.compact_panel && (313..385).contains(&localy) {
+                p.sessions.get(((localy - 313) / 24) as usize)
+            } else {
+                None
+            };
+            if let Some(s) = session {
+                return Some((p.name.clone(), s.clone()));
             }
         }
-        String::new()
+        None
+    }
+    fn title_at(&self, x: i32, y: i32) -> String {
+        self.session_at(x, y)
+            .map(|(_, s)| format!("{}\nНажмите, чтобы перейти к окну задачи", s.task()))
+            .unwrap_or_default()
+    }
+    unsafe fn panel_click(&mut self) {
+        unsafe {
+            let mut point: POINT = zeroed();
+            GetCursorPos(&mut point);
+            ScreenToClient(self.panel, &mut point);
+            let x = (point.x as f64 / self.scale) as i32;
+            let y = (point.y as f64 / self.scale) as i32;
+            if let Some((provider, session)) = self.session_at(x, y) {
+                self.open_task(&provider, &session);
+            }
+        }
     }
     unsafe fn show_tip(&mut self, point: POINT) {
         unsafe {
@@ -884,7 +1164,33 @@ impl App {
             let appearance = CreatePopupMenu();
             let animation = CreatePopupMenu();
             let color = CreatePopupMenu();
+            let panel = CreatePopupMenu();
+            let scale = CreatePopupMenu();
+            let notifications = CreatePopupMenu();
+            let tasks = CreatePopupMenu();
+            let mut task_items = Vec::new();
             add(menu, 1, "Показать состояние", false);
+            for p in &self.providers {
+                for session in p.sessions.iter().take(12) {
+                    add(
+                        tasks,
+                        300 + task_items.len(),
+                        &format!("{} · {}", p.name, session.task()),
+                        false,
+                    );
+                    task_items.push((p.name.clone(), session.clone()));
+                }
+            }
+            if task_items.is_empty() {
+                add(tasks, 0, "Нет недавних задач", false);
+                EnableMenuItem(tasks, 0, MF_BYPOSITION | MF_GRAYED);
+            }
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                tasks as usize,
+                wide("Перейти к задаче").as_ptr(),
+            );
             add(menu, 2, "Открыть папку данных", false);
             for (i, (name, key)) in [
                 ("Искра", "Spark"),
@@ -895,7 +1201,7 @@ impl App {
             .iter()
             .enumerate()
             {
-                add(animation, 10 + i, name, self.settings.animation == *key)
+                add(animation, 10 + i, name, self.settings.animation == *key);
             }
             AppendMenuW(
                 appearance,
@@ -903,7 +1209,12 @@ impl App {
                 animation as usize,
                 wide("Анимация").as_ptr(),
             );
-            add(color, 20, "Оранжевый", self.settings.color_mode == "Orange");
+            add(
+                color,
+                20,
+                "Оранжевый / цвета агентов",
+                self.settings.color_mode == "Orange",
+            );
             add(
                 color,
                 21,
@@ -929,12 +1240,91 @@ impl App {
                 "Показывать текст состояния",
                 self.settings.show_text,
             );
+            add(
+                appearance,
+                32,
+                "Отдельные значки Claude и Codex",
+                self.settings.separate_icons,
+            );
             AppendMenuW(
                 menu,
                 MF_POPUP,
                 appearance as usize,
                 wide("Внешний вид").as_ptr(),
             );
+            add(
+                panel,
+                40,
+                "Горизонтально",
+                self.settings.panel_layout == "Horizontal",
+            );
+            add(
+                panel,
+                41,
+                "Вертикально",
+                self.settings.panel_layout == "Vertical",
+            );
+            add(panel, 42, "Компактный размер", self.settings.compact_panel);
+            for (i, value) in [75, 100, 125, 150].iter().enumerate() {
+                add(
+                    scale,
+                    50 + i,
+                    &format!("{value}%"),
+                    self.settings.panel_scale == *value,
+                );
+            }
+            AppendMenuW(panel, MF_POPUP, scale as usize, wide("Масштаб").as_ptr());
+            AppendMenuW(panel, MF_SEPARATOR, 0, null());
+            add(panel, 43, "Показывать Claude", self.settings.show_claude);
+            add(panel, 44, "Показывать Codex", self.settings.show_codex);
+            if !self.settings.show_codex {
+                EnableMenuItem(panel, 43, MF_BYCOMMAND | MF_GRAYED);
+            }
+            if !self.settings.show_claude {
+                EnableMenuItem(panel, 44, MF_BYCOMMAND | MF_GRAYED);
+            }
+            AppendMenuW(menu, MF_POPUP, panel as usize, wide("Панель").as_ptr());
+            add(
+                notifications,
+                60,
+                "Включить уведомления",
+                self.settings.notifications,
+            );
+            AppendMenuW(notifications, MF_SEPARATOR, 0, null());
+            add(
+                notifications,
+                61,
+                "Завершение работы",
+                self.settings.notify_done,
+            );
+            add(
+                notifications,
+                62,
+                "Ожидание разрешения",
+                self.settings.notify_permission,
+            );
+            add(
+                notifications,
+                63,
+                "Лимиты 80 / 90 / 100%",
+                self.settings.notify_limits,
+            );
+            add(
+                notifications,
+                64,
+                "Сброс лимита",
+                self.settings.notify_reset,
+            );
+            AppendMenuW(notifications, MF_SEPARATOR, 0, null());
+            add(notifications, 65, "Звук", self.settings.sound);
+            add(notifications, 66, "Тихий режим", self.settings.quiet);
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                notifications as usize,
+                wide("Уведомления").as_ptr(),
+            );
+            add(menu, 70, "Автозапуск Windows", system::autostart_enabled());
             AppendMenuW(menu, MF_SEPARATOR, 0, null());
             add(menu, 99, "Выход", false);
             let mut point: POINT = zeroed();
@@ -953,6 +1343,11 @@ impl App {
             DestroyMenu(menu);
             self.menu_active = false;
             self.last_hover = Instant::now();
+            let old_icons = (
+                self.settings.separate_icons,
+                self.settings.show_claude,
+                self.settings.show_codex,
+            );
             match command {
                 1 => {
                     self.pinned = true;
@@ -976,18 +1371,62 @@ impl App {
                 21 => self.settings.color_mode = "System".into(),
                 30 => self.settings.show_timer = !self.settings.show_timer,
                 31 => self.settings.show_text = !self.settings.show_text,
+                32 => self.settings.separate_icons = !self.settings.separate_icons,
+                40 => self.settings.panel_layout = "Horizontal".into(),
+                41 => self.settings.panel_layout = "Vertical".into(),
+                42 => self.settings.compact_panel = !self.settings.compact_panel,
+                43 if self.settings.show_codex => {
+                    self.settings.show_claude = !self.settings.show_claude
+                }
+                44 if self.settings.show_claude => {
+                    self.settings.show_codex = !self.settings.show_codex
+                }
+                50..=53 => self.settings.panel_scale = [75, 100, 125, 150][(command - 50) as usize],
+                60 => self.settings.notifications = !self.settings.notifications,
+                61 => self.settings.notify_done = !self.settings.notify_done,
+                62 => self.settings.notify_permission = !self.settings.notify_permission,
+                63 => self.settings.notify_limits = !self.settings.notify_limits,
+                64 => self.settings.notify_reset = !self.settings.notify_reset,
+                65 => self.settings.sound = !self.settings.sound,
+                66 => self.settings.quiet = !self.settings.quiet,
+                70 => match std::env::current_exe() {
+                    Ok(exe) => {
+                        if let Err(e) = system::set_autostart(!system::autostart_enabled(), &exe) {
+                            error(&e);
+                        }
+                    }
+                    Err(e) => error(&e.to_string()),
+                },
                 99 => PostQuitMessage(0),
+                300..=400 => {
+                    if let Some((provider, session)) = task_items.get((command - 300) as usize) {
+                        self.open_task(provider, session);
+                    }
+                }
                 _ => {}
             }
-            if matches!(command, 10..=13 | 20 | 21 | 30 | 31) {
+            if matches!(command,10..=13|20|21|30..=32|40..=44|50..=53|60..=66) {
                 if let Err(e) = self.settings.save(&data_dir().join("appearance.json")) {
                     error(&format!("Не удалось сохранить настройки: {e}"));
                 }
                 self.frame = 0;
+                if old_icons
+                    != (
+                        self.settings.separate_icons,
+                        self.settings.show_claude,
+                        self.settings.show_codex,
+                    )
+                {
+                    self.rebuild_icons();
+                }
+                if self.settings.quiet || !self.settings.notifications {
+                    self.pending_notices.clear();
+                }
             }
         }
     }
 }
+
 unsafe fn add(menu: HMENU, id: usize, label: &str, checked: bool) {
     unsafe {
         AppendMenuW(
@@ -1015,8 +1454,8 @@ impl Drop for App {
         unsafe {
             KillTimer(self.owner, 1);
             self.notify(NIM_DELETE);
-            if !self.icon.is_null() {
-                DestroyIcon(self.icon);
+            for (_, icon) in self.icons.drain(..) {
+                DestroyIcon(icon);
             }
             DestroyWindow(self.tip);
             DestroyWindow(self.panel);
@@ -1032,8 +1471,10 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
     unsafe {
         if let Some(path) = screenshot {
             let providers = demo();
-            let canvas = Canvas::new(740, panel_height(&providers), 1.);
-            draw_panel(&canvas, &providers, &Appearance::default());
+            let settings = Appearance::load(&data_dir().join("appearance.json"));
+            let (width, height) = panel_size(&providers, &settings);
+            let canvas = Canvas::new(width, height, 1.);
+            draw_panel(&canvas, &providers, &settings);
             return canvas.png(Path::new(&path));
         }
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -1139,13 +1580,19 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
             }))
         };
         let settings = Appearance::load(&data_dir().join("appearance.json"));
-        let icon = make_icon(&settings, "idle", 0);
         let providers = shared.lock().unwrap().clone();
         let mut app = App {
             owner,
             panel,
             tip,
-            icon,
+            icons: Vec::new(),
+            icon_signatures: HashMap::new(),
+            active_tray: 1,
+            notifications: Notifications::default(),
+            pending_notices: VecDeque::new(),
+            last_notice: None,
+            last_notice_at: Instant::now() - Duration::from_secs(10),
+            bindings: HashMap::new(),
             settings,
             providers,
             shared,
@@ -1166,7 +1613,7 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
             menu_active: false,
         };
         TASKBAR_MESSAGE.store(app.taskbar, Ordering::Relaxed);
-        app.notify(NIM_ADD);
+        app.rebuild_icons();
         SetTimer(owner, 1, 150, None);
         if is_demo {
             app.pinned = true;
@@ -1189,6 +1636,10 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
                     continue;
                 }
                 CALLBACK | QUEUED_CALLBACK => {
+                    let id = ((msg.lParam as u32) >> 16) & 0xffff;
+                    if id > 0 {
+                        app.active_tray = id;
+                    }
                     let event = (msg.lParam as u32) & 0xffff;
                     match event {
                         WM_CONTEXTMENU => app.menu(),
@@ -1202,8 +1653,19 @@ pub fn run(is_demo: bool, screenshot: Option<String>) -> Result<(), String> {
                             app.show();
                         }
                         NIN_POPUPCLOSE => app.last_hover = Instant::now(),
+                        NIN_BALLOONUSERCLICK => {
+                            if let Some(notice) = app.last_notice.clone() {
+                                if let Some(session) = notice.session {
+                                    app.open_task(&notice.provider, &session);
+                                }
+                            }
+                        }
                         _ => {}
                     }
+                    continue;
+                }
+                WM_LBUTTONUP if msg.hwnd == panel => {
+                    app.panel_click();
                     continue;
                 }
                 _ => {}
@@ -1234,8 +1696,26 @@ mod tests {
         }
     }
     #[test]
+    fn panel_layout_visibility_and_compact_size() {
+        let providers = demo();
+        let mut settings = Appearance::default();
+        assert_eq!(panel_size(&providers, &settings), (740, 358));
+        settings.panel_layout = "Vertical".into();
+        assert_eq!(panel_size(&providers, &settings), (370, 716));
+        settings.compact_panel = true;
+        assert_eq!(panel_size(&providers, &settings), (370, 584));
+        settings.show_claude = false;
+        assert_eq!(panel_size(&providers, &settings), (370, 292));
+        let canvas = unsafe { Canvas::new(370, 292, 1.) };
+        draw_panel(&canvas, &providers, &settings);
+        let mut utf16 = [0u16; 4];
+        copy_wide(&mut utf16, "😀😀");
+        assert!(utf16[0] >= 0xd800 && utf16[0] <= 0xdbff);
+        assert_eq!(utf16[2], 0);
+    }
+    #[test]
     fn mouse_title_hit_and_height() {
-        assert_eq!(panel_height(&demo()), 358);
+        assert_eq!(panel_size(&demo(), &Appearance::default()), (740, 358));
         assert!(inside(POINT { x: 3, y: 4 }, rect(0, 0, 10, 10)));
     }
 }

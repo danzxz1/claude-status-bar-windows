@@ -2,6 +2,8 @@
 mod integration;
 mod model;
 mod monitor;
+mod notifications;
+mod system;
 mod ui;
 use std::io::{self, Read};
 fn main() {

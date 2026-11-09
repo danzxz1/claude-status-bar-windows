@@ -61,6 +61,19 @@ pub struct Appearance {
     pub color_mode: String,
     pub show_timer: bool,
     pub show_text: bool,
+    pub separate_icons: bool,
+    pub panel_layout: String,
+    pub panel_scale: u32,
+    pub compact_panel: bool,
+    pub show_claude: bool,
+    pub show_codex: bool,
+    pub notifications: bool,
+    pub notify_done: bool,
+    pub notify_permission: bool,
+    pub notify_limits: bool,
+    pub notify_reset: bool,
+    pub sound: bool,
+    pub quiet: bool,
 }
 impl Default for Appearance {
     fn default() -> Self {
@@ -69,6 +82,19 @@ impl Default for Appearance {
             color_mode: "Orange".into(),
             show_timer: true,
             show_text: true,
+            separate_icons: false,
+            panel_layout: "Horizontal".into(),
+            panel_scale: 100,
+            compact_panel: false,
+            show_claude: true,
+            show_codex: true,
+            notifications: true,
+            notify_done: true,
+            notify_permission: true,
+            notify_limits: true,
+            notify_reset: true,
+            sound: false,
+            quiet: false,
         }
     }
 }
@@ -80,6 +106,15 @@ impl Appearance {
         }
         if !["Orange", "System"].contains(&value.color_mode.as_str()) {
             value.color_mode = "Orange".into();
+        }
+        if !["Horizontal", "Vertical"].contains(&value.panel_layout.as_str()) {
+            value.panel_layout = "Horizontal".into();
+        }
+        if ![75, 100, 125, 150].contains(&value.panel_scale) {
+            value.panel_scale = 100;
+        }
+        if !value.show_claude && !value.show_codex {
+            value.show_claude = true;
         }
         value
     }
@@ -236,5 +271,9 @@ mod tests {
         .unwrap();
         assert!(!a.show_timer);
         assert_eq!(a.animation, "Clawd");
+        assert_eq!(a.panel_scale, 100);
+        assert!(a.show_claude && a.show_codex);
+        assert!(!a.sound);
+        assert!(!a.separate_icons);
     }
 }
