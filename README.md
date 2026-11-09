@@ -2,176 +2,179 @@
 
 ![Claude + Codex Status Bar](assets/banner.svg)
 
+**English · [Русский](README.ru.md)**
+
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-82bcf2?style=flat-square)](https://github.com/danzxz1/claude-status-bar-windows/releases)
 [![Rust](https://img.shields.io/badge/Rust-native-da977c?style=flat-square)](Cargo.toml)
-[![Сборка](https://github.com/danzxz1/claude-status-bar-windows/actions/workflows/windows.yml/badge.svg)](https://github.com/danzxz1/claude-status-bar-windows/actions)
+[![Build](https://github.com/danzxz1/claude-status-bar-windows/actions/workflows/windows.yml/badge.svg)](https://github.com/danzxz1/claude-status-bar-windows/actions)
 [![MIT](https://img.shields.io/badge/License-MIT-7bc9a5?style=flat-square)](LICENSE)
 
-**Два агента. Один или два значка. Лимиты всегда под рукой.**
+**Two agents. One or two icons. Your usage limits at a glance.**
 
-[Скачать для Windows](https://github.com/danzxz1/claude-status-bar-windows/releases/latest) · [Возможности](#возможности) · [Установка](#установка) · [Сборка](#сборка-из-исходников)
+[Download for Windows](https://github.com/danzxz1/claude-status-bar-windows/releases/latest) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source)
 
 </div>
 
-Небольшое нативное приложение на Rust для **Claude Code и Codex**. Показывает состояние работы в системном трее, а при наведении — задачи, таймер и процентные шкалы лимитов за **5 часов и 7 дней**.
+A small native **Rust** app that monitors **Claude Code and Codex** from the Windows system tray. Hover over its icon to see task titles, activity, elapsed time, and **5-hour / 7-day usage limits**.
 
-**Для запуска нужен только `.exe`.** Установка Rust, .NET, Node.js или Visual C++ Redistributable не требуется. Приложение не обращается к моделям и не расходует дополнительные токены.
+**Just download and run the `.exe`.** No Rust compiler, .NET, Node.js, or Visual C++ Redistributable is required to run the app. It does not call models or consume additional tokens.
 
-![Панель Claude и Codex — демонстрационные данные](assets/preview.png)
+![Claude and Codex panel with demo data](assets/preview.png)
 
-> На скриншоте вымышленные значения. Проценты обозначают **использованную**, а не оставшуюся долю лимита.
+> Screenshots use demo data. Percentages show quota **used**, not quota remaining. The app currently uses Russian UI labels; instructions below include the actual menu names.
 
-## Возможности
+## Features
 
-| | Что видно |
+| | What you get |
 |---|---|
-| **Claude Code** | Работа, вызов инструмента, ожидание разрешения, завершение ответа |
-| **Codex** | Название задачи, действие и состояние по локальным событиям сессии |
-| **Лимиты** | Две шкалы для каждого агента: проценты и время до сброса |
-| **Несколько сессий** | Приоритет ожидания разрешения, затем работающих сессий; до трёх строк и счётчик остальных |
-| **Длинные названия** | Подсказка с полным отображаемым названием при наведении на строку |
-| **Оформление** | Искра, символьный спиннер, краб Clawd и орбита; цвета установленных агентов или системный цвет |
-| **Настройки** | Независимое отслеживание Claude/Codex, таймер, текст, общий или отдельные значки |
-| **Уведомления** | Завершение, разрешение, пороги 80/90/100% и сброс лимитов; звук и тихий режим |
-| **Панель** | Горизонтально или вертикально, компактный размер, масштаб 75–150%, выбор агентов |
-| **Автозапуск** | Переключатель запуска вместе с Windows без прав администратора |
+| **Claude Code** | Working, tool activity, permission requests, and completed responses |
+| **Codex** | Task titles and activity derived from local session events |
+| **Usage limits** | Separate 5-hour and 7-day progress bars, percentages, and reset countdowns for each agent |
+| **Multiple sessions** | Permission requests take priority over working sessions; up to three rows and a count of the rest |
+| **Long titles** | Hover over a task title to read the full displayed title |
+| **Appearance** | Spark, Unicode spinner, Clawd crab, and Orbit animations; agent colors or a system-aware monochrome icon |
+| **Tracking controls** | Independently enable or disable Claude and Codex; preferences persist across restarts |
+| **Notifications** | Completion, permission requests, 80/90/100% thresholds, and resets; optional sound and quiet mode |
+| **Panel layout** | Horizontal or vertical, compact mode, 75–150% scale, and individual agent blocks |
+| **Windows startup** | Optional startup at sign-in, without administrator rights |
 
-Нет основного окна и отдельной кнопки на панели задач. Общий значок можно заменить двумя независимыми: Claude — оранжевый, Codex — голубой; каждый анимируется по состоянию своего агента. В системном цвете оба адаптируются к теме Windows. Значок остаётся в трее после закрытия сессий, чтобы были доступны последние данные лимитов.
+There is no main window or separate taskbar button. Use one combined icon or two independent indicators: orange for Claude and blue for Codex. Each separate icon animates according to its agent's activity. System color mode adapts to the Windows taskbar theme. The app stays in the tray after sessions close so the latest known limits remain available.
 
-## Установка
+## Install
 
-1. Скачайте `ClaudeWindowsStatusBar.exe` из [последнего релиза](https://github.com/danzxz1/claude-status-bar-windows/releases/latest).
-2. Поместите файл в постоянную папку и запустите.
-3. Найдите значок рядом с часами. Если он скрыт, раскройте список стрелкой и перетащите его в видимую область.
+1. Download `ClaudeWindowsStatusBar.exe` from the [latest release](https://github.com/danzxz1/claude-status-bar-windows/releases/latest).
+2. Place it in a permanent folder and run it.
+3. Find its icon next to the clock. If Windows hides it, expand the tray overflow and drag the icon into the visible area.
 
-### Подключить Claude Code
+### Connect Claude Code
 
-Из папки с приложением выполните:
+Run this from the folder containing the app:
 
 ```powershell
 .\ClaudeWindowsStatusBar.exe --install
 ```
 
-Затем начните новую сессию Claude Code. Интеграция добавит свои command hooks и обёртку `statusLine`, сохранив существующие hooks и исходный вывод строки состояния. Перед изменением настроек создаётся резервная копия.
+Start a new Claude Code session afterward. The integration adds its command hooks and a `statusLine` wrapper, preserving existing hooks and the output of your original status line. It creates a settings backup before making changes.
 
-При начале сессии Claude Code приложение будет запускаться автоматически. Установка интеграции сама по себе не запускает панель — запустите `.exe` отдельно или откройте новую сессию Claude Code.
+When Claude tracking is enabled, a new Claude Code session starts the tray app automatically. Installing the integration does not itself show the panel: run the `.exe` separately or start a new Claude Code session.
 
-### Подключить Codex
+### Connect Codex
 
-Дополнительная установка не нужна. Запущенное приложение читает локальные события из `%USERPROFILE%\.codex\sessions`; переменная `CODEX_HOME` поддерживается.
+No additional setup is needed. While Codex tracking is enabled, the running app reads local events from `%USERPROFILE%\.codex\sessions`. A custom `CODEX_HOME` is supported.
 
-**Если используете только Codex, запускайте приложение вручную.** Сам запуск Codex не запускает значок. По умолчанию автозапуск Windows выключен. Его можно включить в меню по ПКМ.
+**If you only use Codex, start the tray app yourself.** Starting Codex does not launch it. Windows startup is off by default and can be enabled from the tray menu.
 
-## Управление
+## Controls
 
-- **Наведение на значок** — показать панель.
-- **Левый щелчок** — закрепить или скрыть панель.
-- **Щелчок вне закреплённой панели** — снять закрепление.
-- **Наведение на название задачи** — показать название целиком.
-- **ПКМ → «Внешний вид»** — выбрать анимацию, цвет, таймер и текст.
-- **ПКМ → «Отслеживание»** — включить или выключить сбор данных Claude/Codex.
-- **ПКМ → «Панель»** — расположение, компактный размер, масштаб и отображаемые агенты.
-- **ПКМ → «Уведомления»** — события, звук и тихий режим.
-- **ПКМ → «Автозапуск Windows»** — включить или выключить запуск при входе в систему.
-- **ПКМ → «Выход»** — завершить приложение.
+| Action | Result |
+|---|---|
+| Hover over the tray icon | Show the panel |
+| Left-click the tray icon | Pin or hide the panel |
+| Click outside a pinned panel | Unpin it |
+| Hover over a task title | Read the full displayed title |
+| Right-click → **Appearance** (`Внешний вид`) | Animation, color, timer, text, and separate icons |
+| Right-click → **Tracking** (`Отслеживание`) | Enable or disable Claude/Codex data collection |
+| Right-click → **Panel** (`Панель`) | Layout, compact mode, scale, and visible agent blocks |
+| Right-click → **Notifications** (`Уведомления`) | Events, sound, and quiet mode |
+| Right-click → **Windows startup** (`Автозапуск Windows`) | Enable or disable startup at sign-in |
+| Right-click → **Exit** (`Выход`) | Quit the app |
 
-Пока открыто контекстное меню, панель наведения отключена и не мешает выбирать пункты. В системном цвете значок адаптируется к светлой или тёмной теме панели задач. Жёлтая точка ожидания разрешения доступна при любом оформлении.
+The hover panel is suppressed while the context menu is open. A yellow permission indicator remains available with every animation and color mode.
 
-Windows не позволяет штатно разместить произвольный текст рядом со значком трея, как в строке меню macOS. Переключатели текста и таймера управляют содержимым всплывающей панели; названия задач и шкалы остаются видимыми.
+Windows does not provide a standard way to place arbitrary text next to a tray icon as macOS does in its menu bar. Text and timer switches therefore control the panel's activity line; task titles and usage bars remain visible.
 
-## Отслеживание агентов
+## Agent tracking
 
-В меню по ПКМ → «Отслеживание» доступны два независимых флажка: **«Отслеживать Claude»** и **«Отслеживать Codex»**. По умолчанию оба включены; выбор сохраняется между запусками.
+Right-click → **Tracking** (`Отслеживание`) contains two independent switches: **Track Claude** (`Отслеживать Claude`) and **Track Codex** (`Отслеживать Codex`). Both are enabled by default and persist across restarts.
 
-Отключение агента прекращает чтение его данных, отключает уведомления этого источника и скрывает его блок. Для Codex освобождается читатель журналов; для Claude обработчики hooks перестают сохранять новые состояния и лимиты и не запускают панель автоматически. Сами hooks остаются подключёнными, а исходная команда statusLine продолжает выполняться.
+Disabling an agent stops reading its data, suppresses its notifications, and hides its panel block. Disabling Codex releases the session-log reader. Disabling Claude makes its hook handlers stop saving new states and limits or automatically starting the panel. The hooks remain installed, and your original `statusLine` command still runs.
 
-Сохранённые файлы состояний не удаляются. При возобновлении отслеживания Claude старые состояния отбрасываются по времени включения; данные появятся после новых событий. Старая история не вызывает уведомлений при повторном включении.
+Existing state files are preserved. When Claude tracking resumes, states older than the enable time are ignored; fresh events populate the panel again. Re-enabling an agent does not replay historical notifications.
 
-В цветном режиме общий значок учитывает установленных **и включённых** агентов: оба — оранжевый/голубой 50/50, только Claude — оранжевый, только Codex — голубой. Если отключены оба, остаётся серый значок с меню для повторного включения.
+The combined color icon reflects agents that are both **installed and enabled for tracking**:
 
-Настройки «Панель → Показывать Claude/Codex» управляют только видимостью и не останавливают отслеживание.
+- **Claude only:** orange.
+- **Claude + Codex:** orange left half, blue right half.
+- **Codex only:** blue.
+- **Both disabled:** a gray icon with an accessible menu to enable tracking again.
 
-## Уведомления
+The **Panel → Show Claude/Codex** settings only control visibility. They do not stop data collection.
 
-По умолчанию включены уведомления без звука:
+## Notifications
 
-- агент завершил ответ;
-- агент ожидает разрешения, если такое событие доступно;
-- расход впервые достиг 80, 90 или 100% в текущем окне лимита;
-- наступило известное время сброса лимита.
+Notifications are enabled without sound by default for:
 
-При запуске старая история не порождает уведомлений. Один и тот же порог не повторяется при колебаниях процентов. Тихий режим подавляет все уведомления и не накапливает их для последующей отправки. Сброс по таймеру означает завершение окна; новый процент подтверждается следующим снимком данных.
+- an agent finishing a response;
+- an agent waiting for permission, when that event is available;
+- usage first reaching 80, 90, or 100% within a limit window;
+- a known limit reset time being reached.
 
-Уведомления используют системный механизм Windows. Показ и звук также зависят от настроек уведомлений и режима «Не беспокоить» в Windows.
+Startup does not generate notifications from old history. Previously reached thresholds do not repeat when percentages fluctuate. Quiet mode suppresses notifications without queuing them for later. A reset countdown means the known window has ended; the next data snapshot confirms the new percentage.
 
-## Панель и значки
+Notifications use Windows' native mechanism. Display and sound also depend on Windows notification and Do Not Disturb settings.
 
-В меню «Панель» доступны горизонтальное и вертикальное расположение, компактный размер без списка сессий и служебных строк, масштаб 75/100/125/150% и независимый выбор блоков Claude/Codex. Минимум один блок выбран в настройках видимости; отслеживание при этом можно отключить полностью. Панель автоматически уменьшается, если не помещается в рабочую область экрана.
+## Panel and icons
 
-В цветном режиме общий значок показывает установленные приложения с включённым отслеживанием:
+The **Panel** (`Панель`) menu offers horizontal and vertical layouts, compact mode without session rows and extra status text, 75/100/125/150% scaling, and separate Claude/Codex block visibility. At least one block stays selected in the visibility settings, but tracking can be disabled completely. The panel shrinks automatically when needed to fit the monitor's work area.
 
-- только Claude — оранжевый;
-- Claude и Codex — левая половина оранжевая, правая голубая;
-- только Codex — голубой.
+![Two-color animations](assets/brand-icons.png)
 
-![Двухцветные анимации](assets/brand-icons.png)
+The color boundary stays fixed at the center in all four animations. Installed agents are detected using executable files in `PATH`, standard install locations, and Windows App Paths. Old settings folders or session history do not count as installed applications. Running or stopped sessions do not affect the palette; disabled tracking excludes an agent from it. Installation is checked every 30 seconds. System monochrome mode and the yellow permission indicator remain available.
 
-Разделение цвета фиксировано по центру во всех четырёх анимациях. Наличие проверяется по исполняемым файлам в PATH, стандартных каталогах установки и App Paths Windows. Папки настроек и старая история сессий не считаются установленным приложением. Состояние запуска агентов на цвет не влияет; выключенный в меню отслеживания агент исключается из палитры. Проверка установки повторяется раз в 30 секунд. Системный монохромный режим и жёлтый индикатор ожидания разрешения сохраняются.
+Task names are plain text with full-title tooltips.
 
-Названия задач — обычный текст с подсказкой полного названия.
-
-«Внешний вид → Отдельные значки Claude и Codex» включает два независимых индикатора для отображаемых агентов. Уведомления можно настраивать независимо от того, какие блоки видны. Открытая панель остаётся на месте при движении мыши над значком.
+**Appearance → Separate Claude and Codex icons** (`Внешний вид → Отдельные значки Claude и Codex`) enables independent indicators for the visible tracked agents. Hiding a block alone does not disable its notifications. The open panel stays in place when the mouse moves over the tray icon.
 
 <details>
-<summary>Компактная вертикальная панель</summary>
+<summary>Compact vertical layout</summary>
 
-![Компактная вертикальная панель — демонстрационные данные](assets/preview-vertical.png)
+![Compact vertical panel with demo data](assets/preview-vertical.png)
 
 </details>
 
-## Автозапуск Windows
+## Windows startup
 
-Переключатель по ПКМ создаёт или удаляет только значение `ClaudeWindowsStatusBar` в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Права администратора не нужны. По умолчанию функция выключена. Если переместили `.exe`, выключите и снова включите автозапуск, чтобы обновить путь.
+The startup switch creates or removes only the `ClaudeWindowsStatusBar` value in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Administrator rights are not required. It is disabled by default. If you move the `.exe`, turn startup off and on again to update its path.
 
-## Откуда берутся данные
+## Data sources
 
-**Claude Code:** события hooks и поля `rate_limits.five_hour` / `rate_limits.seven_day`, которые Claude передаёт в `statusLine`. Проценты обновляются после поступления данных от Claude Code. До первого ответа или при отсутствии поддерживаемой авторизации лимиты могут не передаваться.
+**Claude Code:** hook events and the `rate_limits.five_hour` / `rate_limits.seven_day` fields passed to `statusLine`. Percentages update as Claude Code supplies data. Limits may be absent before the first response or without a supported sign-in method.
 
-**Codex:** локальные JSONL-события `token_count`, `task_started`, `task_complete`, `turn_aborted` и вызовы инструментов. Названия берутся из `session_index.jsonl`; при отсутствии названия используется подходящее сообщение пользователя. Служебные инструкции окружения отбрасываются. Окна сопоставляются по длительности: 300 и 10080 минут; другие группы лимитов не смешиваются с `codex`.
+**Codex:** local JSONL events such as `token_count`, `task_started`, `task_complete`, `turn_aborted`, and tool calls. Task names come from `session_index.jsonl`; when no title is available, a suitable user message is used. Environment instructions are excluded. Limit windows are matched by duration: 300 and 10080 minutes. Other limit buckets are not mixed with the `codex` bucket.
 
-Приложение **не выполняет HTTP-запросов**, не читает `auth.json`, OAuth-токены или API-ключи и не добавляет сообщений в контекст модели. Названия задач хранятся в памяти; копии сообщений на диск не записываются.
+The app **makes no HTTP requests**, reads no `auth.json`, OAuth tokens, or API keys, and adds no messages to model context. Task names are held in memory; message copies are not written to disk.
 
-### Границы точности
+### Accuracy and limitations
 
-- При отсутствии активности отображается последний полученный снимок и время его обновления. Сброс отсчитывается локально; истёкшее окно показывает ожидание обновления, а не 0%.
-- Журнал Codex не всегда содержит событие закрытия окна или ожидания разрешения. В списке показаны недавние сессии за 12 часов; для работающей сессии без событий больше 15 минут выводится «Нет свежих событий».
-- При запуске читаются метаданные и последний 1 МиБ каждой из 16 недавно изменённых сессий Codex, далее — дописанные байты. Новые файлы обнаруживаются в пределах 30 секунд. Строки больше 8 МиБ пропускаются. Если последний лимит не попал в прочитанный фрагмент, нужно дождаться следующего события с лимитами.
-- Проектная конфигурация Claude Code может перекрывать пользовательскую `statusLine`. Исходная команда `statusLine` исполняется в Git Bash с таймаутом 8 секунд; зависимости самой исходной команды сохраняются. Для нестандартного Git Bash задайте `CLAUDE_CODE_GIT_BASH_PATH`.
-- Для нативного `claude.exe` учитываются PID и время запуска. Если процесс определить не удалось, используются SessionEnd и ограничение давности в 24 часа. Подключение WSL-сессий в этой версии не реализовано.
+- With no new activity, the panel shows the latest known snapshot and its update time. Reset countdowns run locally. An expired window displays a pending update instead of assuming 0% usage.
+- Codex logs do not always report window closure or permission waits. The list contains sessions updated within the last 12 hours. A working session with no events for more than 15 minutes shows “No recent events” (`Нет свежих событий`).
+- At startup, the app reads metadata and the last 1 MiB of each of the 16 most recently modified Codex sessions, then processes appended bytes. New files are discovered within 30 seconds. Lines larger than 8 MiB are skipped. If a limit snapshot falls outside the initial tail, wait for the next event containing limits.
+- Claude Code project settings may override the user-level `statusLine`. The original command runs in Git Bash with an 8-second timeout; any dependencies of that command are still required. Set `CLAUDE_CODE_GIT_BASH_PATH` for a custom Git Bash location.
+- Native `claude.exe` sessions are checked using their PID and process start time. If the process cannot be identified, the app uses SessionEnd and a 24-hour age limit. WSL sessions are not connected in this version.
 
-## Настройки и удаление
+## Settings and uninstall
 
-Локальные данные находятся в `%LOCALAPPDATA%\ClaudeWindowsStatusBar`:
+Local app data lives in `%LOCALAPPDATA%\ClaudeWindowsStatusBar`:
 
-| Файл | Назначение |
+| File | Purpose |
 |---|---|
-| `appearance.json` | Отслеживание, оформление, панель, значки, уведомления и тихий режим |
-| `integration.json` | Путь приложения и исходная `statusLine` |
-| `usage.json` | Последний снимок лимитов Claude |
-| `sessions\*.json` | Состояния сессий Claude |
-| `settings-backup-*.json` | Резервные копии настроек перед установкой |
+| `appearance.json` | Tracking, appearance, layout, icons, notifications, and quiet mode |
+| `integration.json` | App path and your original `statusLine` |
+| `usage.json` | Latest Claude usage snapshot |
+| `sessions\*.json` | Claude session states |
+| `settings-backup-*.json` | Settings backups created before installation |
 
-Удаление интеграции:
+Remove the Claude integration with:
 
 ```powershell
 .\ClaudeWindowsStatusBar.exe --uninstall
 ```
 
-Для полного удаления также выключите «Автозапуск Windows», затем закройте приложение через меню. Исходная строка состояния восстановится, чужие hooks сохранятся. Если после установки вы вручную заменили `statusLine`, удаление оставит вашу новую команду. Не перемещайте `.exe` после подключения Claude без повторного `--install`: hooks используют абсолютный путь.
+For complete removal, also disable **Windows startup** and quit the app through its tray menu. Your original status line is restored, and other hooks are preserved. If you manually replaced `statusLine` after installation, uninstall leaves your newer command intact. Do not move the `.exe` after connecting Claude without running `--install` again: hooks use its absolute path.
 
-## Сборка из исходников
+## Build from source
 
-Для разработки нужны Rust и инструменты линковки Windows. Рекомендуемый вариант — Rust MSVC с Visual Studio Build Tools и Windows SDK. Также поддерживается Rust GNU с MinGW. Для **пользователей готовой сборки** эти инструменты не нужны.
+Development requires Rust and Windows linker tools. Rust MSVC with Visual Studio Build Tools and the Windows SDK is the recommended setup; Rust GNU with MinGW is also supported. **Users of the prebuilt `.exe` do not need these tools.**
 
 ```powershell
 cargo build --release --locked
@@ -180,35 +183,35 @@ cargo fmt -- --check
 cargo clippy --all-targets --locked -- -D warnings
 ```
 
-Готовый файл: `target\release\ClaudeWindowsStatusBar.exe`. Статическая линковка CRT настроена в `.cargo/config.toml`.
+The executable is `target\release\ClaudeWindowsStatusBar.exe`. Static CRT linking is configured in `.cargo/config.toml`.
 
-Либо используйте `build.ps1`, а для сборки с подключением Claude — `build.ps1 -Install`. Перед заменой установленного `.exe` закройте работающий экземпляр через меню.
+Alternatively, use `build.ps1`, or `build.ps1 -Install` to build and connect Claude. Quit the running app before replacing its installed `.exe`.
 
-Дополнительные команды:
+Additional commands:
 
 ```powershell
-# Панель с вымышленными данными
+# Show demo data
 .\target\release\ClaudeWindowsStatusBar.exe --demo
 
-# Скриншот демонстрационных данных с текущими настройками панели
+# Render demo data using the current panel settings
 .\target\release\ClaudeWindowsStatusBar.exe --screenshot assets\preview.png
 
-# Сквозной тест exe на временных настройках
+# End-to-end executable checks with temporary settings
 .\scripts\smoke-integration.ps1
 
-# Проверка меню настоящей мышью; закройте обычный экземпляр приложения
+# Interactive menu checks; quit the regular app first
 .\scripts\smoke-ui.ps1
 .\scripts\smoke-ui.ps1 -SeparateIcons -Vertical
 .\scripts\smoke-ui.ps1 -ToggleTracking
 .\scripts\smoke-ui.ps1 -SeparateIcons -DisabledTracking
 ```
 
-GitHub Actions выполняет форматирование, Clippy, тесты и release-сборку. Push тега `v*` публикует `.exe`, ZIP и SHA-256 в GitHub Releases.
+GitHub Actions checks formatting, runs Clippy and tests, and builds the release executable. Pushing a `v*` tag publishes the `.exe`, ZIP, and SHA-256 checksum to GitHub Releases.
 
-## Благодарности
+## Acknowledgments
 
-Идея индикатора состояния и набор вариантов оформления вдохновлены [m1ckc3s/claude-status-bar](https://github.com/m1ckc3s/claude-status-bar) для macOS. Это отдельная реализация для Windows на Rust; Swift-код и графические ассеты оригинала не включены. Значки рисуются программно.
+The status indicator concept and appearance options were inspired by [m1ckc3s/claude-status-bar](https://github.com/m1ckc3s/claude-status-bar) for macOS. This is a separate native Windows implementation in Rust. It includes no Swift source or graphic assets from the original project; icons are drawn programmatically.
 
-Проект не связан с Anthropic или OpenAI. Названия Claude и Codex принадлежат их правообладателям.
+This project is not affiliated with Anthropic or OpenAI. Claude and Codex names belong to their respective owners.
 
 [MIT License](LICENSE)
