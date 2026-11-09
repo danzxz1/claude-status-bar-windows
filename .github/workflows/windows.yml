@@ -1,0 +1,48 @@
+name: Windows build
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --locked
+      - name: Release build
+        run: cargo build --release --locked
+      - name: Native integration smoke
+        shell: pwsh
+        run: .\scripts\smoke-integration.ps1
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist -Force | Out-Null
+          Copy-Item target/release/ClaudeWindowsStatusBar.exe dist/
+          $hash = (Get-FileHash dist/ClaudeWindowsStatusBar.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ClaudeWindowsStatusBar.exe" | Set-Content dist/SHA256SUMS.txt -Encoding utf8
+          Compress-Archive -Path dist/ClaudeWindowsStatusBar.exe,LICENSE,README.md -DestinationPath dist/ClaudeWindowsStatusBar-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeWindowsStatusBar-windows-x64
+          path: dist/*
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME dist/ClaudeWindowsStatusBar.exe dist/ClaudeWindowsStatusBar-windows-x64.zip dist/SHA256SUMS.txt --title "Claude + Codex Status Bar $env:GITHUB_REF_NAME" --generate-notes

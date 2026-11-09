@@ -1,0 +1,10 @@
+/.tools/
+/target/
+/dist/
+/dist-next/
+/legacy/
+*-result.*
+*.user
+/bin/
+/obj/
+/preview.png
